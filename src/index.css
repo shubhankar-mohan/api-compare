@@ -67,6 +67,14 @@ All colors MUST be HSL.
     --diff-line-number: 220 8% 46%;
     --diff-line-number-bg: 220 14% 96%;
 
+    /* Syntax highlighting colors */
+    --syntax-string: 142 60% 35%;
+    --syntax-number: 262 83% 58%;
+    --syntax-boolean: 217 91% 60%;
+    --syntax-null: 0 84% 60%;
+    --syntax-bracket: 220 8% 46%;
+    --syntax-punctuation: 220 14% 40%;
+
     /* Interactive colors */
     --success: 142 71% 45%;
     --success-foreground: 0 0% 100%;
@@ -146,6 +154,14 @@ All colors MUST be HSL.
     --diff-unchanged: 215 20% 65%;
     --diff-line-number: 215 20% 55%;
     --diff-line-number-bg: 224 71% 7%;
+
+    /* Syntax highlighting colors - dark mode */
+    --syntax-string: 142 60% 60%;
+    --syntax-number: 262 83% 70%;
+    --syntax-boolean: 217 91% 70%;
+    --syntax-null: 0 84% 70%;
+    --syntax-bracket: 215 20% 65%;
+    --syntax-punctuation: 215 20% 55%;
 
     /* Interactive colors */
     --success: 142 71% 45%;

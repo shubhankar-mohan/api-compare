@@ -2,20 +2,20 @@ import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Copy, Minus, Plus, Globe, Server, Code2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { ApiResponse } from '@/lib/requestExecutor';
 import { computeDiff, formatJson, formatHeaders, DiffLine } from '@/lib/diffAlgorithm';
 import { cn } from '@/lib/utils';
+import { JsonSyntaxHighlight } from './JsonSyntaxHighlight';
 
 interface DiffViewerProps {
   original: ApiResponse;
   localhost: ApiResponse;
 }
 
-function DiffLineComponent({ line, side }: { line: DiffLine; side: 'left' | 'right' }) {
+function DiffLineComponent({ line, side, isJson }: { line: DiffLine; side: 'left' | 'right'; isJson?: boolean }) {
   const bgClass = {
     added: 'bg-[hsl(var(--diff-added-bg))]',
     removed: 'bg-[hsl(var(--diff-removed-bg))]',
@@ -39,8 +39,12 @@ function DiffLineComponent({ line, side }: { line: DiffLine; side: 'left' | 'rig
         {line.type === 'added' && <Plus className="h-3 w-3 text-[hsl(var(--diff-added))]" />}
         {line.type === 'removed' && <Minus className="h-3 w-3 text-[hsl(var(--diff-removed))]" />}
       </div>
-      <pre className={cn('flex-1 px-2 py-0.5 overflow-x-auto whitespace-pre', textClass)}>
-        {line.content || ' '}
+      <pre className={cn('flex-1 px-2 py-0.5 overflow-x-auto whitespace-pre', line.type !== 'unchanged' && textClass)}>
+        {isJson && line.type === 'unchanged' ? (
+          <JsonSyntaxHighlight content={line.content || ' '} />
+        ) : (
+          line.content || ' '
+        )}
       </pre>
     </div>
   );
@@ -56,6 +60,7 @@ function DiffPanel({
   content,
   icon: Icon,
   accentColor,
+  isJson = false,
 }: { 
   title: string;
   lines: DiffLine[];
@@ -66,6 +71,7 @@ function DiffPanel({
   content: string;
   icon: typeof Globe;
   accentColor: 'primary' | 'accent';
+  isJson?: boolean;
 }) {
   const copyToClipboard = () => {
     navigator.clipboard.writeText(content);
@@ -116,7 +122,7 @@ function DiffPanel({
       </div>
       <div className="min-w-0">
         {lines.map((line, idx) => (
-          <DiffLineComponent key={idx} line={line} side={side} />
+          <DiffLineComponent key={idx} line={line} side={side} isJson={isJson} />
         ))}
       </div>
     </div>
@@ -176,6 +182,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                 content={original.body}
                 icon={Globe}
                 accentColor="primary"
+                isJson={true}
               />
               <DiffPanel
                 title="Localhost"
@@ -186,6 +193,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                 content={localhost.body}
                 icon={Server}
                 accentColor="accent"
+                isJson={true}
               />
             </div>
           </TabsContent>

@@ -4,6 +4,7 @@ import { SummaryCard } from '@/components/SummaryCard';
 import { DiffViewer } from '@/components/DiffViewer';
 import { TroubleshootSection } from '@/components/TroubleshootSection';
 import { CurlDiffLogo } from '@/components/CurlDiffLogo';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { parseCurl } from '@/lib/curlParser';
 import { executeComparison, ComparisonResult } from '@/lib/requestExecutor';
 import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
@@ -80,6 +81,7 @@ const Index = () => {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <ThemeToggle />
               <Button
                 variant="outline"
                 size="sm"
