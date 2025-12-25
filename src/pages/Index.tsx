@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { CurlInput } from '@/components/CurlInput';
 import { SummaryCard } from '@/components/SummaryCard';
 import { DiffViewer } from '@/components/DiffViewer';
-import { ErrorDisplay } from '@/components/ErrorDisplay';
+import { TroubleshootSection } from '@/components/TroubleshootSection';
 import { parseCurl } from '@/lib/curlParser';
 import { executeComparison, ComparisonResult } from '@/lib/requestExecutor';
 import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
 import { toast } from '@/hooks/use-toast';
-import { ArrowRightLeft, Code2, ExternalLink } from 'lucide-react';
+import { ArrowRightLeft, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const Index = () => {
@@ -79,10 +79,6 @@ const Index = () => {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Code2 className="h-4 w-4" />
-                <span className="text-sm hidden sm:inline">Developer Tool</span>
-              </div>
               <Button
                 variant="outline"
                 size="sm"
@@ -116,11 +112,9 @@ const Index = () => {
               />
             </>
           ) : (
-            <ErrorDisplay original={result.original} localhost={result.localhost} />
+            <TroubleshootSection original={result.original} localhost={result.localhost} />
           )
         )}
-
-        {/* Empty State */}
         {!result && !isLoading && (
           <div className="text-center py-16 px-4">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-muted mb-4">
