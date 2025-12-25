@@ -4,7 +4,8 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Terminal, ArrowRightLeft, Loader2 } from 'lucide-react';
+import { Terminal, ArrowRightLeft, Loader2, Info } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface CurlInputProps {
   onSubmit: (curlCommand: string, localhostUrl: string) => void;
@@ -60,6 +61,13 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
               onChange={(e) => setLocalhostUrl(e.target.value)}
               className="font-mono"
             />
+            <Alert className="bg-muted/50 border-muted">
+              <Info className="h-4 w-4" />
+              <AlertDescription className="text-xs">
+                Your local server must have <strong>CORS enabled</strong> to allow browser requests. 
+                Add <code className="px-1 py-0.5 rounded bg-background">Access-Control-Allow-Origin: *</code> header.
+              </AlertDescription>
+            </Alert>
           </div>
 
           <Button 
