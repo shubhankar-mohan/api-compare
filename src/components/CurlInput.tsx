@@ -4,7 +4,8 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Terminal, ArrowRightLeft, Loader2, Sparkles } from 'lucide-react';
+import { Terminal, ArrowRightLeft, Loader2, Sparkles, X, Copy } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
 
 interface CurlInputProps {
   onSubmit: (curlCommand: string, localhostUrl: string) => void;
@@ -43,7 +44,34 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
       <CardContent className="pt-6">
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-2">
-            <Label htmlFor="curl-input" className="text-sm font-semibold">cURL Command</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="curl-input" className="text-sm font-semibold">cURL Command</Label>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard.writeText(curlCommand);
+                    toast({ title: 'Copied!', description: 'cURL command copied to clipboard' });
+                  }}
+                  disabled={!curlCommand.trim()}
+                  className="h-7 px-2 text-muted-foreground hover:text-foreground"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCurlCommand('')}
+                  disabled={!curlCommand.trim()}
+                  className="h-7 px-2 text-muted-foreground hover:text-destructive"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
             <Textarea
               id="curl-input"
               placeholder={exampleCurl}

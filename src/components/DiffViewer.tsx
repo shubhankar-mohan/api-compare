@@ -75,11 +75,13 @@ function DiffPanel({
     });
   };
 
+  const lineText = lineCount === 1 ? '1 line' : `${lineCount} lines`;
+
   return (
-    <div className="flex flex-col h-full min-w-0">
+    <div className="flex flex-col min-w-0">
       <div className={cn(
-        "flex items-center justify-between p-3 border-b",
-        accentColor === 'primary' ? 'bg-gradient-to-r from-primary/10 to-transparent' : 'bg-gradient-to-r from-accent/10 to-transparent'
+        "flex items-center justify-between p-3 border-b sticky top-0 z-10",
+        accentColor === 'primary' ? 'bg-gradient-to-r from-primary/10 to-card' : 'bg-gradient-to-r from-accent/10 to-card'
       )}>
         <div className="flex items-center gap-2">
           <div className={cn(
@@ -106,19 +108,17 @@ function DiffPanel({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground font-medium">{lineCount} lines</span>
+          <span className="text-xs text-muted-foreground font-medium">{lineText}</span>
           <Button variant="ghost" size="sm" onClick={copyToClipboard} className="h-7 px-2 hover:bg-muted">
             <Copy className="h-3 w-3" />
           </Button>
         </div>
       </div>
-      <ScrollArea className="flex-1">
-        <div className="min-w-0">
-          {lines.map((line, idx) => (
-            <DiffLineComponent key={idx} line={line} side={side} />
-          ))}
-        </div>
-      </ScrollArea>
+      <div className="min-w-0">
+        {lines.map((line, idx) => (
+          <DiffLineComponent key={idx} line={line} side={side} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -137,8 +137,8 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
   }, [original.headers, localhost.headers]);
 
   return (
-    <Card className="flex flex-col overflow-hidden border-0 shadow-lg">
-      <CardHeader className="pb-0 flex-shrink-0 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
+    <Card className="border-0 shadow-lg overflow-hidden">
+      <CardHeader className="pb-0 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
         <CardTitle className="text-lg flex items-center gap-2">
           <div className="p-2 rounded-lg bg-primary/10">
             <Code2 className="h-5 w-5 text-primary" />
@@ -146,8 +146,8 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
           Response Comparison
         </CardTitle>
       </CardHeader>
-      <CardContent className="flex-1 p-0 overflow-hidden">
-        <Tabs defaultValue="body" className="flex flex-col h-full">
+      <CardContent className="p-0">
+        <Tabs defaultValue="body" className="flex flex-col">
           <div className="px-6 pt-4">
             <TabsList className="bg-muted/50 p-1">
               <TabsTrigger value="body" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
@@ -166,7 +166,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
           </div>
           
           <TabsContent value="body" className="m-0 border-t mt-4">
-            <div className="grid grid-cols-2 divide-x h-[500px] overflow-hidden">
+            <div className="grid grid-cols-2 divide-x">
               <DiffPanel
                 title="Original Domain"
                 lines={bodyDiff.left}
@@ -191,7 +191,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
           </TabsContent>
           
           <TabsContent value="headers" className="m-0 border-t mt-4">
-            <div className="grid grid-cols-2 divide-x h-[500px] overflow-hidden">
+            <div className="grid grid-cols-2 divide-x">
               <DiffPanel
                 title="Original Domain"
                 lines={headersDiff.left}
