@@ -8,7 +8,7 @@ import { parseCurl } from '@/lib/curlParser';
 import { executeComparison, ComparisonResult } from '@/lib/requestExecutor';
 import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
 import { toast } from '@/hooks/use-toast';
-import { ExternalLink, ArrowRightLeft } from 'lucide-react';
+import { ExternalLink, ArrowRightLeft, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const Index = () => {
@@ -63,15 +63,17 @@ const Index = () => {
   ) : null;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex flex-col">
       {/* Header */}
-      <header className="border-b bg-card sticky top-0 z-50">
+      <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50 shadow-sm">
         <div className="max-w-6xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <CurlDiffLogo className="h-10 w-10" />
               <div>
-                <h1 className="text-xl font-semibold">CurlDiff</h1>
+                <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+                  CurlDiff
+                </h1>
                 <p className="text-sm text-muted-foreground">
                   Compare API responses between production and localhost
                 </p>
@@ -82,6 +84,7 @@ const Index = () => {
                 variant="outline"
                 size="sm"
                 onClick={() => window.open(window.location.href, '_blank')}
+                className="shadow-sm hover:shadow-md transition-shadow"
               >
                 <ExternalLink className="h-4 w-4 mr-1" />
                 <span className="hidden sm:inline">Open in new tab</span>
@@ -92,7 +95,7 @@ const Index = () => {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 py-6 space-y-6 flex-1 w-full">
+      <main className="max-w-6xl mx-auto px-4 py-8 space-y-8 flex-1 w-full">
         {/* Input Section */}
         <CurlInput onSubmit={handleCompare} isLoading={isLoading} />
 
@@ -115,22 +118,37 @@ const Index = () => {
           )
         )}
         {!result && !isLoading && (
-          <div className="text-center py-16 px-4">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-muted mb-4">
-              <ArrowRightLeft className="h-8 w-8 text-muted-foreground" />
+          <div className="text-center py-20 px-4">
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/20 mb-6 shadow-lg">
+              <ArrowRightLeft className="h-10 w-10 text-primary" />
             </div>
-            <h2 className="text-lg font-medium mb-2">Ready to Compare</h2>
-            <p className="text-muted-foreground max-w-md mx-auto">
+            <h2 className="text-2xl font-bold mb-3 bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">Ready to Compare</h2>
+            <p className="text-muted-foreground max-w-md mx-auto text-lg">
               Paste a cURL command above to compare the API response between your production 
               server and local development environment.
             </p>
-            <div className="mt-6 p-4 rounded-lg bg-card border max-w-lg mx-auto text-left">
-              <p className="text-sm font-medium mb-2">Supported cURL features:</p>
-              <ul className="text-sm text-muted-foreground space-y-1">
-                <li>• GET, POST, PUT, PATCH methods (-X flag)</li>
-                <li>• Custom headers (-H flag)</li>
-                <li>• Request body (-d or --data flags)</li>
-                <li>• Quoted and unquoted URLs</li>
+            <div className="mt-8 p-6 rounded-2xl bg-card border shadow-lg max-w-lg mx-auto text-left">
+              <div className="flex items-center gap-2 mb-4">
+                <Sparkles className="h-5 w-5 text-accent" />
+                <p className="font-semibold">Supported cURL features:</p>
+              </div>
+              <ul className="space-y-2">
+                <li className="flex items-center gap-2 text-muted-foreground">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                  GET, POST, PUT, PATCH methods (-X flag)
+                </li>
+                <li className="flex items-center gap-2 text-muted-foreground">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                  Custom headers (-H flag)
+                </li>
+                <li className="flex items-center gap-2 text-muted-foreground">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                  Request body (-d or --data flags)
+                </li>
+                <li className="flex items-center gap-2 text-muted-foreground">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                  Quoted and unquoted URLs
+                </li>
               </ul>
             </div>
           </div>
@@ -138,8 +156,8 @@ const Index = () => {
       </main>
 
       {/* Footer */}
-      <footer className="border-t bg-background">
-        <div className="max-w-6xl mx-auto px-4 py-4">
+      <footer className="border-t bg-card/50">
+        <div className="max-w-6xl mx-auto px-4 py-6">
           <p className="text-sm text-muted-foreground text-center">
             Built for developers who need to validate local API implementations
           </p>

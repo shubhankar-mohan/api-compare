@@ -6,7 +6,8 @@ import {
   FileText, 
   ArrowLeftRight,
   Globe,
-  Server
+  Server,
+  Zap
 } from 'lucide-react';
 import { ApiResponse } from '@/lib/requestExecutor';
 
@@ -26,104 +27,140 @@ export function SummaryCard({ original, localhost, hasDifferences }: SummaryCard
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
+  const getStatusVariant = (status: number, success: boolean) => {
+    if (!success || status >= 500) return 'destructive';
+    if (status >= 400) return 'warning';
+    if (status >= 200 && status < 300) return 'success';
+    return 'secondary';
+  };
+
   return (
-    <Card>
-      <CardHeader className="pb-3">
+    <Card className="overflow-hidden border-0 shadow-lg">
+      <CardHeader className="pb-3 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
         <CardTitle className="flex items-center gap-2 text-lg">
-          <ArrowLeftRight className="h-5 w-5" />
+          <div className="p-2 rounded-lg bg-primary/10">
+            <ArrowLeftRight className="h-5 w-5 text-primary" />
+          </div>
           Comparison Summary
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-4">
+      <CardContent className="pt-6">
+        <div className="grid grid-cols-2 gap-6">
           {/* Original Domain */}
-          <div className="p-4 rounded-lg border bg-muted/30">
-            <div className="flex items-center gap-2 mb-3">
-              <Globe className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium text-sm">Original Domain</span>
+          <div className="p-5 rounded-xl border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-transparent hover:border-primary/40 transition-colors">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="p-2 rounded-lg bg-primary/10">
+                <Globe className="h-4 w-4 text-primary" />
+              </div>
+              <span className="font-semibold">Original Domain</span>
             </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Status</p>
-                <Badge variant={original.success && original.status < 400 ? 'default' : 'destructive'}>
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <p className="text-xs text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Status</p>
+                <Badge 
+                  variant={getStatusVariant(original.status, original.success) as any}
+                  className="text-sm px-3 py-1"
+                >
                   {original.status} {original.statusText}
                 </Badge>
               </div>
-              <div className="text-right">
-                <p className="text-xs text-muted-foreground mb-1">Size</p>
-                <span className="font-medium text-sm">{formatSize(original.size)}</span>
+              <div className="flex-1">
+                <p className="text-xs text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Size</p>
+                <div className="flex items-center gap-1.5">
+                  <Zap className="h-4 w-4 text-warning" />
+                  <span className="font-semibold text-lg">{formatSize(original.size)}</span>
+                </div>
               </div>
             </div>
           </div>
 
           {/* Localhost */}
-          <div className="p-4 rounded-lg border bg-muted/30">
-            <div className="flex items-center gap-2 mb-3">
-              <Server className="h-4 w-4 text-muted-foreground" />
-              <span className="font-medium text-sm">Localhost</span>
+          <div className="p-5 rounded-xl border-2 border-accent/20 bg-gradient-to-br from-accent/5 to-transparent hover:border-accent/40 transition-colors">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="p-2 rounded-lg bg-accent/10">
+                <Server className="h-4 w-4 text-accent" />
+              </div>
+              <span className="font-semibold">Localhost</span>
             </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Status</p>
-                <Badge variant={localhost.success && localhost.status < 400 ? 'default' : 'destructive'}>
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <p className="text-xs text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Status</p>
+                <Badge 
+                  variant={getStatusVariant(localhost.status, localhost.success) as any}
+                  className="text-sm px-3 py-1"
+                >
                   {localhost.status} {localhost.statusText}
                 </Badge>
               </div>
-              <div className="text-right">
-                <p className="text-xs text-muted-foreground mb-1">Size</p>
-                <span className="font-medium text-sm">{formatSize(localhost.size)}</span>
+              <div className="flex-1">
+                <p className="text-xs text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Size</p>
+                <div className="flex items-center gap-1.5">
+                  <Zap className="h-4 w-4 text-warning" />
+                  <span className="font-semibold text-lg">{formatSize(localhost.size)}</span>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
         {/* Summary Row */}
-        <div className="mt-4 pt-4 border-t flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="mt-6 pt-6 border-t flex items-center justify-between">
+          <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
-              {statusMatch ? (
-                <CheckCircle2 className="h-4 w-4 text-[hsl(var(--diff-added))]" />
-              ) : (
-                <XCircle className="h-4 w-4 text-[hsl(var(--diff-removed))]" />
-              )}
-              <span className="text-sm">Status {statusMatch ? 'Match' : 'Mismatch'}</span>
+              <div className={`p-1.5 rounded-full ${statusMatch ? 'bg-success/10' : 'bg-destructive/10'}`}>
+                {statusMatch ? (
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-destructive" />
+                )}
+              </div>
+              <span className="text-sm font-medium">Status {statusMatch ? 'Match' : 'Mismatch'}</span>
             </div>
             <div className="flex items-center gap-2">
-              {bothSuccessful ? (
-                <CheckCircle2 className="h-4 w-4 text-[hsl(var(--diff-added))]" />
-              ) : (
-                <XCircle className="h-4 w-4 text-[hsl(var(--diff-removed))]" />
-              )}
-              <span className="text-sm">Both Successful</span>
+              <div className={`p-1.5 rounded-full ${bothSuccessful ? 'bg-success/10' : 'bg-destructive/10'}`}>
+                {bothSuccessful ? (
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-destructive" />
+                )}
+              </div>
+              <span className="text-sm font-medium">Both Successful</span>
             </div>
           </div>
           <div>
             {hasDifferences ? (
-              <Badge variant="destructive" className="gap-1">
-                <FileText className="h-3 w-3" />
+              <Badge variant="destructive" className="gap-1.5 px-4 py-1.5 text-sm">
+                <FileText className="h-4 w-4" />
                 Differences Found
               </Badge>
             ) : (
-              <Badge variant="secondary" className="gap-1 bg-[hsl(var(--diff-added-bg))] text-[hsl(var(--diff-added))]">
-                <CheckCircle2 className="h-3 w-3" />
+              <Badge className="gap-1.5 px-4 py-1.5 text-sm bg-success hover:bg-success/90 text-success-foreground">
+                <CheckCircle2 className="h-4 w-4" />
                 No Differences
               </Badge>
             )}
           </div>
         </div>
 
-
         {/* Error Messages */}
         {(original.error || localhost.error) && (
-          <div className="mt-4 pt-4 border-t space-y-2">
+          <div className="mt-6 pt-6 border-t space-y-3">
             {original.error && (
-              <div className="text-sm text-destructive">
-                <strong>Original Error:</strong> {original.error}
+              <div className="flex items-start gap-3 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+                <XCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium text-destructive text-sm">Original Error</p>
+                  <p className="text-sm text-destructive/80 mt-1">{original.error}</p>
+                </div>
               </div>
             )}
             {localhost.error && (
-              <div className="text-sm text-destructive">
-                <strong>Localhost Error:</strong> {localhost.error}
+              <div className="flex items-start gap-3 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+                <XCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium text-destructive text-sm">Localhost Error</p>
+                  <p className="text-sm text-destructive/80 mt-1">{localhost.error}</p>
+                </div>
               </div>
             )}
           </div>

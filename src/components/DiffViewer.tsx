@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Copy, Minus, Plus, Globe, Server } from 'lucide-react';
+import { Copy, Minus, Plus, Globe, Server, Code2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { ApiResponse } from '@/lib/requestExecutor';
@@ -55,6 +55,7 @@ function DiffPanel({
   side,
   content,
   icon: Icon,
+  accentColor,
 }: { 
   title: string;
   lines: DiffLine[];
@@ -64,6 +65,7 @@ function DiffPanel({
   side: 'left' | 'right';
   content: string;
   icon: typeof Globe;
+  accentColor: 'primary' | 'accent';
 }) {
   const copyToClipboard = () => {
     navigator.clipboard.writeText(content);
@@ -75,26 +77,37 @@ function DiffPanel({
 
   return (
     <div className="flex flex-col h-full min-w-0">
-      <div className="flex items-center justify-between p-3 border-b bg-card">
+      <div className={cn(
+        "flex items-center justify-between p-3 border-b",
+        accentColor === 'primary' ? 'bg-gradient-to-r from-primary/10 to-transparent' : 'bg-gradient-to-r from-accent/10 to-transparent'
+      )}>
         <div className="flex items-center gap-2">
-          <Icon className="h-4 w-4 text-muted-foreground" />
-          <span className="font-medium text-sm">{title}</span>
+          <div className={cn(
+            "p-1.5 rounded-lg",
+            accentColor === 'primary' ? 'bg-primary/10' : 'bg-accent/10'
+          )}>
+            <Icon className={cn(
+              "h-4 w-4",
+              accentColor === 'primary' ? 'text-primary' : 'text-accent'
+            )} />
+          </div>
+          <span className="font-semibold text-sm">{title}</span>
           {side === 'left' && removals !== undefined && removals > 0 && (
             <Badge variant="destructive" className="gap-1 text-xs">
               <Minus className="h-3 w-3" />
-              {removals} removal{removals !== 1 ? 's' : ''}
+              {removals}
             </Badge>
           )}
           {side === 'right' && additions !== undefined && additions > 0 && (
-            <Badge className="gap-1 text-xs bg-[hsl(var(--diff-added))] hover:bg-[hsl(var(--diff-added))]/90">
+            <Badge variant="success" className="gap-1 text-xs">
               <Plus className="h-3 w-3" />
-              {additions} addition{additions !== 1 ? 's' : ''}
+              {additions}
             </Badge>
           )}
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">{lineCount} lines</span>
-          <Button variant="ghost" size="sm" onClick={copyToClipboard} className="h-7 px-2">
+          <span className="text-xs text-muted-foreground font-medium">{lineCount} lines</span>
+          <Button variant="ghost" size="sm" onClick={copyToClipboard} className="h-7 px-2 hover:bg-muted">
             <Copy className="h-3 w-3" />
           </Button>
         </div>
@@ -124,24 +137,29 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
   }, [original.headers, localhost.headers]);
 
   return (
-    <Card className="flex flex-col overflow-hidden">
-      <CardHeader className="pb-0 flex-shrink-0">
-        <CardTitle className="text-lg">Response Comparison</CardTitle>
+    <Card className="flex flex-col overflow-hidden border-0 shadow-lg">
+      <CardHeader className="pb-0 flex-shrink-0 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <div className="p-2 rounded-lg bg-primary/10">
+            <Code2 className="h-5 w-5 text-primary" />
+          </div>
+          Response Comparison
+        </CardTitle>
       </CardHeader>
       <CardContent className="flex-1 p-0 overflow-hidden">
         <Tabs defaultValue="body" className="flex flex-col h-full">
           <div className="px-6 pt-4">
-            <TabsList>
-              <TabsTrigger value="body" className="gap-2">
+            <TabsList className="bg-muted/50 p-1">
+              <TabsTrigger value="body" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
                 Response Body
                 {bodyDiff.hasDifferences && (
-                  <span className="w-2 h-2 rounded-full bg-destructive" />
+                  <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
                 )}
               </TabsTrigger>
-              <TabsTrigger value="headers" className="gap-2">
+              <TabsTrigger value="headers" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
                 Headers
                 {headersDiff.hasDifferences && (
-                  <span className="w-2 h-2 rounded-full bg-destructive" />
+                  <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
                 )}
               </TabsTrigger>
             </TabsList>
@@ -157,6 +175,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                 side="left"
                 content={original.body}
                 icon={Globe}
+                accentColor="primary"
               />
               <DiffPanel
                 title="Localhost"
@@ -166,6 +185,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                 side="right"
                 content={localhost.body}
                 icon={Server}
+                accentColor="accent"
               />
             </div>
           </TabsContent>
@@ -180,6 +200,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                 side="left"
                 content={formatHeaders(original.headers)}
                 icon={Globe}
+                accentColor="primary"
               />
               <DiffPanel
                 title="Localhost"
@@ -189,6 +210,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                 side="right"
                 content={formatHeaders(localhost.headers)}
                 icon={Server}
+                accentColor="accent"
               />
             </div>
           </TabsContent>
