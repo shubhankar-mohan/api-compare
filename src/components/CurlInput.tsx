@@ -1,11 +1,19 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Terminal, ArrowRightLeft, Loader2, Sparkles, X, Copy } from 'lucide-react';
+import { Terminal, ArrowRightLeft, Loader2, Sparkles, X, Copy, History, Clock, Trash2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { useCurlHistory } from '@/hooks/useCurlHistory';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 
 interface CurlInputProps {
   onSubmit: (curlCommand: string, localhostUrl: string) => void;
@@ -15,12 +23,30 @@ interface CurlInputProps {
 export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
   const [curlCommand, setCurlCommand] = useState('');
   const [localhostUrl, setLocalhostUrl] = useState('http://localhost:8080');
+  const { history, saveToHistory, removeFromHistory, clearHistory } = useCurlHistory();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (curlCommand.trim()) {
+      saveToHistory(curlCommand, localhostUrl);
       onSubmit(curlCommand, localhostUrl);
     }
+  };
+
+  const loadFromHistory = (command: string, url: string) => {
+    setCurlCommand(command);
+    setLocalhostUrl(url);
+    toast({ title: 'Loaded', description: 'cURL command loaded from history' });
+  };
+
+  const formatTimestamp = (timestamp: number) => {
+    const date = new Date(timestamp);
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const truncateCommand = (command: string, maxLength = 50) => {
+    const firstLine = command.split('\n')[0].replace(/\\/g, '').trim();
+    return firstLine.length > maxLength ? firstLine.substring(0, maxLength) + '...' : firstLine;
   };
 
   const exampleCurl = `curl 'https://api.example.com/users/123' \\
@@ -47,6 +73,58 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
             <div className="flex items-center justify-between">
               <Label htmlFor="curl-input" className="text-sm font-semibold">cURL Command</Label>
               <div className="flex items-center gap-1">
+                {history.length > 0 && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-muted-foreground hover:text-foreground gap-1"
+                      >
+                        <History className="h-3.5 w-3.5" />
+                        <span className="text-xs">History</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-80">
+                      {history.map((item) => (
+                        <DropdownMenuItem
+                          key={item.id}
+                          className="flex items-start justify-between gap-2 py-2"
+                          onClick={() => loadFromHistory(item.command, item.localhostUrl)}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="font-mono text-xs truncate">{truncateCommand(item.command)}</p>
+                            <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                              <Clock className="h-3 w-3" />
+                              {formatTimestamp(item.timestamp)}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeFromHistory(item.id);
+                            }}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onClick={clearHistory}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mr-2" />
+                        Clear all history
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
                 <Button
                   type="button"
                   variant="ghost"
