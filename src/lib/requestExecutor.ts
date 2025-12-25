@@ -11,6 +11,41 @@ export interface ApiResponse {
   url: string;
 }
 
+// Standard HTTP status text mapping for consistent display
+const HTTP_STATUS_TEXT: Record<number, string> = {
+  100: 'Continue',
+  101: 'Switching Protocols',
+  200: 'OK',
+  201: 'Created',
+  202: 'Accepted',
+  204: 'No Content',
+  301: 'Moved Permanently',
+  302: 'Found',
+  304: 'Not Modified',
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  404: 'Not Found',
+  405: 'Method Not Allowed',
+  408: 'Request Timeout',
+  409: 'Conflict',
+  422: 'Unprocessable Entity',
+  429: 'Too Many Requests',
+  500: 'Internal Server Error',
+  501: 'Not Implemented',
+  502: 'Bad Gateway',
+  503: 'Service Unavailable',
+  504: 'Gateway Timeout',
+};
+
+function getStatusText(status: number, responseStatusText: string): string {
+  // Use response statusText if available, otherwise fall back to our mapping
+  if (responseStatusText && responseStatusText.trim()) {
+    return responseStatusText;
+  }
+  return HTTP_STATUS_TEXT[status] || 'Unknown';
+}
+
 async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiResponse> {
   try {
     const fetchOptions: RequestInit = {
@@ -34,7 +69,7 @@ async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiRespo
 
     return {
       status: response.status,
-      statusText: response.statusText,
+      statusText: getStatusText(response.status, response.statusText),
       headers: headersObj,
       body: bodyText,
       size: new Blob([bodyText]).size,

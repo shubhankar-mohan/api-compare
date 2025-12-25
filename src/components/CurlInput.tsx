@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Terminal, ArrowRightLeft, Loader2 } from 'lucide-react';
+import { Terminal, ArrowRightLeft, Loader2, Sparkles } from 'lucide-react';
 
 interface CurlInputProps {
   onSubmit: (curlCommand: string, localhostUrl: string) => void;
@@ -27,38 +27,41 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
   -H 'Content-Type: application/json'`;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Terminal className="h-5 w-5" />
-          cURL Command
+    <Card className="overflow-hidden border-0 shadow-lg">
+      <CardHeader className="bg-gradient-to-r from-primary/10 via-accent/10 to-primary/10 pb-6">
+        <CardTitle className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-primary/20 shadow-sm">
+            <Terminal className="h-5 w-5 text-primary" />
+          </div>
+          <span>cURL Command</span>
+          <Sparkles className="h-4 w-4 text-accent ml-auto" />
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="text-base">
           Paste your cURL command to compare responses between production and localhost
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
+      <CardContent className="pt-6">
+        <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-2">
-            <Label htmlFor="curl-input">cURL Command</Label>
+            <Label htmlFor="curl-input" className="text-sm font-semibold">cURL Command</Label>
             <Textarea
               id="curl-input"
               placeholder={exampleCurl}
               value={curlCommand}
               onChange={(e) => setCurlCommand(e.target.value)}
-              className="font-mono text-sm min-h-[140px] resize-y"
+              className="font-mono text-sm min-h-[140px] resize-y bg-muted/50 border-2 focus:border-primary/50 transition-colors"
             />
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="localhost-url">Localhost Base URL</Label>
+            <Label htmlFor="localhost-url" className="text-sm font-semibold">Localhost Base URL</Label>
             <Input
               id="localhost-url"
               type="url"
               placeholder="http://localhost:8080"
               value={localhostUrl}
               onChange={(e) => setLocalhostUrl(e.target.value)}
-              className="font-mono"
+              className="font-mono bg-muted/50 border-2 focus:border-primary/50 transition-colors"
             />
             <p className="text-xs text-muted-foreground">
               The path from your cURL command will be appended to this base URL
@@ -68,16 +71,17 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
           <Button 
             type="submit" 
             disabled={!curlCommand.trim() || isLoading}
-            className="w-full"
+            className="w-full h-12 text-base font-semibold shadow-md hover:shadow-lg transition-all"
+            size="lg"
           >
             {isLoading ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 Comparing...
               </>
             ) : (
               <>
-                <ArrowRightLeft className="mr-2 h-4 w-4" />
+                <ArrowRightLeft className="mr-2 h-5 w-5" />
                 Compare Requests
               </>
             )}
