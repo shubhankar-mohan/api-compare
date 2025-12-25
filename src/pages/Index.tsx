@@ -7,7 +7,8 @@ import { parseCurl } from '@/lib/curlParser';
 import { executeComparison, ComparisonResult } from '@/lib/requestExecutor';
 import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
 import { toast } from '@/hooks/use-toast';
-import { ArrowRightLeft, Code2 } from 'lucide-react';
+import { ArrowRightLeft, Code2, ExternalLink } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -77,9 +78,19 @@ const Index = () => {
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Code2 className="h-4 w-4" />
-              <span className="text-sm">Developer Tool</span>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Code2 className="h-4 w-4" />
+                <span className="text-sm hidden sm:inline">Developer Tool</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(window.location.href, '_blank')}
+              >
+                <ExternalLink className="h-4 w-4 mr-1" />
+                <span className="hidden sm:inline">Open in new tab</span>
+              </Button>
             </div>
           </div>
         </div>
