@@ -124,11 +124,11 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
   }, [original.headers, localhost.headers]);
 
   return (
-    <Card className="flex flex-col">
-      <CardHeader className="pb-0">
+    <Card className="flex flex-col overflow-hidden">
+      <CardHeader className="pb-0 flex-shrink-0">
         <CardTitle className="text-lg">Response Comparison</CardTitle>
       </CardHeader>
-      <CardContent className="flex-1 p-0">
+      <CardContent className="flex-1 p-0 overflow-hidden">
         <Tabs defaultValue="body" className="flex flex-col h-full">
           <div className="px-6 pt-4">
             <TabsList>
@@ -147,8 +147,8 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
             </TabsList>
           </div>
           
-          <TabsContent value="body" className="flex-1 m-0 border-t mt-4">
-            <div className="grid grid-cols-2 divide-x h-[500px]">
+          <TabsContent value="body" className="m-0 border-t mt-4">
+            <div className="grid grid-cols-2 divide-x h-[500px] overflow-hidden">
               <DiffPanel
                 title="Original Domain"
                 lines={bodyDiff.left}
@@ -170,8 +170,8 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
             </div>
           </TabsContent>
           
-          <TabsContent value="headers" className="flex-1 m-0 border-t mt-4">
-            <div className="grid grid-cols-2 divide-x h-[500px]">
+          <TabsContent value="headers" className="m-0 border-t mt-4">
+            <div className="grid grid-cols-2 divide-x h-[500px] overflow-hidden">
               <DiffPanel
                 title="Original Domain"
                 lines={headersDiff.left}
