@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { CurlInput } from '@/components/CurlInput';
 import { SummaryCard } from '@/components/SummaryCard';
 import { DiffViewer } from '@/components/DiffViewer';
+import { ErrorDisplay } from '@/components/ErrorDisplay';
 import { parseCurl } from '@/lib/curlParser';
 import { executeComparison, ComparisonResult } from '@/lib/requestExecutor';
 import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
 import { toast } from '@/hooks/use-toast';
-import { ArrowRightLeft, Github, Code2 } from 'lucide-react';
+import { ArrowRightLeft, Code2 } from 'lucide-react';
 
 const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -91,17 +92,21 @@ const Index = () => {
 
         {/* Results Section */}
         {result && (
-          <>
-            <SummaryCard 
-              original={result.original} 
-              localhost={result.localhost}
-              hasDifferences={bodyDiff?.hasDifferences ?? false}
-            />
-            <DiffViewer 
-              original={result.original} 
-              localhost={result.localhost} 
-            />
-          </>
+          result.original.success && result.localhost.success ? (
+            <>
+              <SummaryCard 
+                original={result.original} 
+                localhost={result.localhost}
+                hasDifferences={bodyDiff?.hasDifferences ?? false}
+              />
+              <DiffViewer 
+                original={result.original} 
+                localhost={result.localhost} 
+              />
+            </>
+          ) : (
+            <ErrorDisplay original={result.original} localhost={result.localhost} />
+          )
         )}
 
         {/* Empty State */}
