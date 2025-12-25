@@ -62,9 +62,9 @@ const Index = () => {
   ) : null;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="border-b bg-card">
+      <header className="border-b bg-card sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -97,7 +97,7 @@ const Index = () => {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-6xl mx-auto px-4 py-6 space-y-6 flex-1 w-full">
         {/* Input Section */}
         <CurlInput onSubmit={handleCompare} isLoading={isLoading} />
 
@@ -145,7 +145,7 @@ const Index = () => {
       </main>
 
       {/* Footer */}
-      <footer className="border-t mt-auto">
+      <footer className="border-t bg-background">
         <div className="max-w-6xl mx-auto px-4 py-4">
           <p className="text-sm text-muted-foreground text-center">
             Built for developers who need to validate local API implementations
