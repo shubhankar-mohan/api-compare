@@ -35,88 +35,83 @@ export function SummaryCard({ original, localhost, hasDifferences }: SummaryCard
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {/* Status Match */}
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">Status Match</p>
+        <div className="grid grid-cols-2 gap-4">
+          {/* Original Domain */}
+          <div className="p-4 rounded-lg border bg-muted/30">
+            <div className="flex items-center gap-2 mb-3">
+              <Globe className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium text-sm">Original Domain</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Status</p>
+                <Badge variant={original.success && original.status < 400 ? 'default' : 'destructive'}>
+                  {original.status} {original.statusText}
+                </Badge>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground mb-1">Size</p>
+                <span className="font-medium text-sm">{formatSize(original.size)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Localhost */}
+          <div className="p-4 rounded-lg border bg-muted/30">
+            <div className="flex items-center gap-2 mb-3">
+              <Server className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium text-sm">Localhost</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Status</p>
+                <Badge variant={localhost.success && localhost.status < 400 ? 'default' : 'destructive'}>
+                  {localhost.status} {localhost.statusText}
+                </Badge>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground mb-1">Size</p>
+                <span className="font-medium text-sm">{formatSize(localhost.size)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Summary Row */}
+        <div className="mt-4 pt-4 border-t flex items-center justify-between">
+          <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               {statusMatch ? (
                 <CheckCircle2 className="h-4 w-4 text-[hsl(var(--diff-added))]" />
               ) : (
                 <XCircle className="h-4 w-4 text-[hsl(var(--diff-removed))]" />
               )}
-              <span className="font-medium">{statusMatch ? 'Yes' : 'No'}</span>
+              <span className="text-sm">Status {statusMatch ? 'Match' : 'Mismatch'}</span>
             </div>
-          </div>
-
-          {/* Both Successful */}
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">Both Successful</p>
             <div className="flex items-center gap-2">
               {bothSuccessful ? (
                 <CheckCircle2 className="h-4 w-4 text-[hsl(var(--diff-added))]" />
               ) : (
                 <XCircle className="h-4 w-4 text-[hsl(var(--diff-removed))]" />
               )}
-              <span className="font-medium">{bothSuccessful ? 'Yes' : 'No'}</span>
+              <span className="text-sm">Both Successful</span>
             </div>
           </div>
-
-          {/* Response Sizes */}
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">Response Sizes</p>
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-1 text-sm">
-                <Globe className="h-3 w-3" />
-                <span>{formatSize(original.size)}</span>
-              </div>
-              <div className="flex items-center gap-1 text-sm">
-                <Server className="h-3 w-3" />
-                <span>{formatSize(localhost.size)}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Differences */}
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">Differences</p>
-            <div className="flex items-center gap-2">
-              {hasDifferences ? (
-                <Badge variant="destructive" className="gap-1">
-                  <FileText className="h-3 w-3" />
-                  Found
-                </Badge>
-              ) : (
-                <Badge variant="secondary" className="gap-1 bg-[hsl(var(--diff-added-bg))] text-[hsl(var(--diff-added))]">
-                  <CheckCircle2 className="h-3 w-3" />
-                  None
-                </Badge>
-              )}
-            </div>
+          <div>
+            {hasDifferences ? (
+              <Badge variant="destructive" className="gap-1">
+                <FileText className="h-3 w-3" />
+                Differences Found
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="gap-1 bg-[hsl(var(--diff-added-bg))] text-[hsl(var(--diff-added))]">
+                <CheckCircle2 className="h-3 w-3" />
+                No Differences
+              </Badge>
+            )}
           </div>
         </div>
 
-        {/* Status Codes */}
-        <div className="mt-4 pt-4 border-t grid grid-cols-2 gap-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Globe className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm">Original</span>
-            </div>
-            <Badge variant={original.success && original.status < 400 ? 'default' : 'destructive'}>
-              {original.status} {original.statusText}
-            </Badge>
-          </div>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Server className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm">Localhost</span>
-            </div>
-            <Badge variant={localhost.success && localhost.status < 400 ? 'default' : 'destructive'}>
-              {localhost.status} {localhost.statusText}
-            </Badge>
-          </div>
-        </div>
 
         {/* Error Messages */}
         {(original.error || localhost.error) && (

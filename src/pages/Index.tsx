@@ -3,11 +3,12 @@ import { CurlInput } from '@/components/CurlInput';
 import { SummaryCard } from '@/components/SummaryCard';
 import { DiffViewer } from '@/components/DiffViewer';
 import { TroubleshootSection } from '@/components/TroubleshootSection';
+import { CurlDiffLogo } from '@/components/CurlDiffLogo';
 import { parseCurl } from '@/lib/curlParser';
 import { executeComparison, ComparisonResult } from '@/lib/requestExecutor';
 import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
 import { toast } from '@/hooks/use-toast';
-import { ArrowRightLeft, ExternalLink } from 'lucide-react';
+import { ExternalLink, ArrowRightLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const Index = () => {
@@ -68,11 +69,9 @@ const Index = () => {
         <div className="max-w-6xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-primary/10">
-                <ArrowRightLeft className="h-6 w-6 text-primary" />
-              </div>
+              <CurlDiffLogo className="h-10 w-10" />
               <div>
-                <h1 className="text-xl font-semibold">cURL Compare</h1>
+                <h1 className="text-xl font-semibold">CurlDiff</h1>
                 <p className="text-sm text-muted-foreground">
                   Compare API responses between production and localhost
                 </p>
