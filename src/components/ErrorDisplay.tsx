@@ -79,6 +79,7 @@ export function ErrorDisplay({ original, localhost }: ErrorDisplayProps) {
               <li>Local server is not running</li>
               <li>Wrong port number in localhost URL</li>
               <li>CORS not configured on your local server</li>
+              <li>HTTPS page calling HTTP localhost (Mixed Content)</li>
               <li>Firewall blocking the connection</li>
             </ul>
           </div>
