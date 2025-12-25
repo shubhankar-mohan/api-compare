@@ -159,7 +159,7 @@ const Index = () => {
       <footer className="border-t bg-card/50">
         <div className="max-w-6xl mx-auto px-4 py-6">
           <p className="text-sm text-muted-foreground text-center">
-            Built for developers who need to validate local API implementations
+            Created with ❤️ by <span className="font-semibold text-foreground">Virtualis World</span>
           </p>
         </div>
       </footer>
