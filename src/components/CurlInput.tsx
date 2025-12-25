@@ -16,6 +16,13 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
   const [curlCommand, setCurlCommand] = useState('');
   const [localhostUrl, setLocalhostUrl] = useState('http://localhost:8080');
 
+  const isHttpsPage =
+    typeof window !== 'undefined' &&
+    typeof window.location !== 'undefined' &&
+    window.location.protocol === 'https:';
+  const isHttpLocalUrl = localhostUrl.trim().toLowerCase().startsWith('http://');
+  const showMixedContentWarning = isHttpsPage && isHttpLocalUrl;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (curlCommand.trim()) {
@@ -64,10 +71,21 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
             <Alert className="bg-muted/50 border-muted">
               <Info className="h-4 w-4" />
               <AlertDescription className="text-xs">
-                Your local server must have <strong>CORS enabled</strong> to allow browser requests. 
+                Your local server must have <strong>CORS enabled</strong> to allow browser requests.
                 Add <code className="px-1 py-0.5 rounded bg-background">Access-Control-Allow-Origin: *</code> header.
               </AlertDescription>
             </Alert>
+
+            {showMixedContentWarning && (
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertDescription className="text-xs">
+                  You’re running this tool over <strong>HTTPS</strong>, but your localhost URL is <strong>HTTP</strong>.
+                  Many browsers block this as <strong>Mixed Content</strong>. Try serving your local API on HTTPS
+                  (e.g. <code className="px-1 py-0.5 rounded bg-background">https://localhost:8080</code>) or run this app locally over HTTP.
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
 
           <Button 

@@ -42,6 +42,21 @@ async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiRespo
       url,
     };
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+
+    const isHttpsPage =
+      typeof window !== 'undefined' &&
+      typeof window.location !== 'undefined' &&
+      window.location.protocol === 'https:';
+
+    // When the app is served over HTTPS, browsers often block HTTP localhost calls as "Mixed Content".
+    const enhancedError =
+      isHttpsPage && url.startsWith('http://')
+        ? 'Blocked by browser (mixed content): this page is HTTPS but your localhost URL is HTTP. Use https://localhost (recommended) or run this app locally over http://.'
+        : errorMessage === 'Failed to fetch'
+          ? 'Failed to fetch (CORS, mixed content, or server not reachable).'
+          : errorMessage;
+
     return {
       status: 0,
       statusText: 'Error',
@@ -49,7 +64,7 @@ async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiRespo
       body: '',
       size: 0,
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred',
+      error: enhancedError,
       url,
     };
   }
