@@ -76,10 +76,10 @@ const Index = () => {
               <CurlDiffLogo className="h-10 w-10" />
               <div>
                 <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-                  CurlDiff
+                  SmartDiff
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                  Compare API responses and text differences
+                  Compare <span className="font-bold">offline</span> — your data stays with you
                 </p>
               </div>
             </div>
