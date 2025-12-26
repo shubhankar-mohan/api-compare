@@ -5,6 +5,8 @@ import { DiffViewer } from '@/components/DiffViewer';
 import { TroubleshootSection } from '@/components/TroubleshootSection';
 import { CurlDiffLogo } from '@/components/CurlDiffLogo';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { AppTabs, AppMode } from '@/components/AppTabs';
+import { TextDiffChecker } from '@/components/TextDiffChecker';
 import { parseCurl } from '@/lib/curlParser';
 import { executeComparison, ComparisonResult } from '@/lib/requestExecutor';
 import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
@@ -13,6 +15,7 @@ import { ExternalLink, ArrowRightLeft, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const Index = () => {
+  const [mode, setMode] = useState<AppMode>('curl-diff');
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ComparisonResult | null>(null);
 
@@ -76,20 +79,21 @@ const Index = () => {
                   CurlDiff
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                  Compare API responses between production and localhost
+                  Compare API responses and text differences
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <AppTabs mode={mode} onModeChange={setMode} />
               <ThemeToggle />
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => window.open(window.location.href, '_blank')}
-                className="shadow-sm hover:shadow-md transition-shadow"
+                className="shadow-sm hover:shadow-md transition-shadow hidden sm:flex"
               >
                 <ExternalLink className="h-4 w-4 mr-1" />
-                <span className="hidden sm:inline">Open in new tab</span>
+                <span>Open in new tab</span>
               </Button>
             </div>
           </div>
@@ -98,62 +102,68 @@ const Index = () => {
 
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-8 flex-1 w-full">
-        {/* Input Section */}
-        <CurlInput onSubmit={handleCompare} isLoading={isLoading} />
+        {mode === 'curl-diff' ? (
+          <>
+            {/* Input Section */}
+            <CurlInput onSubmit={handleCompare} isLoading={isLoading} />
 
-        {/* Results Section */}
-        {result && (
-          result.original.success && result.localhost.success ? (
-            <>
-              <SummaryCard 
-                original={result.original} 
-                localhost={result.localhost}
-                hasDifferences={bodyDiff?.hasDifferences ?? false}
-              />
-              <DiffViewer 
-                original={result.original} 
-                localhost={result.localhost} 
-              />
-            </>
-          ) : (
-            <TroubleshootSection original={result.original} localhost={result.localhost} />
-          )
-        )}
-        {!result && !isLoading && (
-          <div className="text-center py-20 px-4">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/20 mb-6 shadow-lg">
-              <ArrowRightLeft className="h-10 w-10 text-primary" />
-            </div>
-            <h2 className="text-2xl font-bold mb-3 bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">Ready to Compare</h2>
-            <p className="text-muted-foreground max-w-md mx-auto text-lg">
-              Paste a cURL command above to compare the API response between your production 
-              server and local development environment.
-            </p>
-            <div className="mt-8 p-6 rounded-2xl bg-card border shadow-lg max-w-lg mx-auto text-left">
-              <div className="flex items-center gap-2 mb-4">
-                <Sparkles className="h-5 w-5 text-accent" />
-                <p className="font-semibold">Supported cURL features:</p>
+            {/* Results Section */}
+            {result && (
+              result.original.success && result.localhost.success ? (
+                <>
+                  <SummaryCard 
+                    original={result.original} 
+                    localhost={result.localhost}
+                    hasDifferences={bodyDiff?.hasDifferences ?? false}
+                  />
+                  <DiffViewer 
+                    original={result.original} 
+                    localhost={result.localhost} 
+                  />
+                </>
+              ) : (
+                <TroubleshootSection original={result.original} localhost={result.localhost} />
+              )
+            )}
+            {!result && !isLoading && (
+              <div className="text-center py-20 px-4">
+                <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/20 mb-6 shadow-lg">
+                  <ArrowRightLeft className="h-10 w-10 text-primary" />
+                </div>
+                <h2 className="text-2xl font-bold mb-3 bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">Ready to Compare</h2>
+                <p className="text-muted-foreground max-w-md mx-auto text-lg">
+                  Paste a cURL command above to compare the API response between your production 
+                  server and local development environment.
+                </p>
+                <div className="mt-8 p-6 rounded-2xl bg-card border shadow-lg max-w-lg mx-auto text-left">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Sparkles className="h-5 w-5 text-accent" />
+                    <p className="font-semibold">Supported cURL features:</p>
+                  </div>
+                  <ul className="space-y-2">
+                    <li className="flex items-center gap-2 text-muted-foreground">
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                      GET, POST, PUT, PATCH methods (-X flag)
+                    </li>
+                    <li className="flex items-center gap-2 text-muted-foreground">
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                      Custom headers (-H flag)
+                    </li>
+                    <li className="flex items-center gap-2 text-muted-foreground">
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                      Request body (-d or --data flags)
+                    </li>
+                    <li className="flex items-center gap-2 text-muted-foreground">
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                      Quoted and unquoted URLs
+                    </li>
+                  </ul>
+                </div>
               </div>
-              <ul className="space-y-2">
-                <li className="flex items-center gap-2 text-muted-foreground">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-                  GET, POST, PUT, PATCH methods (-X flag)
-                </li>
-                <li className="flex items-center gap-2 text-muted-foreground">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-                  Custom headers (-H flag)
-                </li>
-                <li className="flex items-center gap-2 text-muted-foreground">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-                  Request body (-d or --data flags)
-                </li>
-                <li className="flex items-center gap-2 text-muted-foreground">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-                  Quoted and unquoted URLs
-                </li>
-              </ul>
-            </div>
-          </div>
+            )}
+          </>
+        ) : (
+          <TextDiffChecker />
         )}
       </main>
 

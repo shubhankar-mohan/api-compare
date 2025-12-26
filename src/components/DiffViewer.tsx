@@ -1,14 +1,15 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Copy, Minus, Plus, Globe, Server, Code2 } from 'lucide-react';
+import { Copy, Minus, Plus, Globe, Server, Code2, Rows3, FoldVertical } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { ApiResponse } from '@/lib/requestExecutor';
 import { computeDiff, formatJson, formatHeaders, DiffLine } from '@/lib/diffAlgorithm';
 import { cn } from '@/lib/utils';
 import { JsonSyntaxHighlight } from './JsonSyntaxHighlight';
+import { FoldableJson } from './FoldableJson';
 
 interface DiffViewerProps {
   original: ApiResponse;
@@ -130,6 +131,8 @@ function DiffPanel({
 }
 
 export function DiffViewer({ original, localhost }: DiffViewerProps) {
+  const [viewMode, setViewMode] = useState<'diff' | 'foldable'>('diff');
+  
   const bodyDiff = useMemo(() => {
     const leftFormatted = formatJson(original.body);
     const rightFormatted = formatJson(localhost.body);
@@ -141,6 +144,16 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
     const rightHeaders = formatHeaders(localhost.headers);
     return computeDiff(leftHeaders, rightHeaders);
   }, [original.headers, localhost.headers]);
+
+  const isJsonResponse = useMemo(() => {
+    try {
+      JSON.parse(original.body);
+      JSON.parse(localhost.body);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [original.body, localhost.body]);
 
   return (
     <Card className="border-0 shadow-lg overflow-hidden">
@@ -154,7 +167,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
       </CardHeader>
       <CardContent className="p-0">
         <Tabs defaultValue="body" className="flex flex-col">
-          <div className="px-6 pt-4">
+          <div className="px-6 pt-4 flex items-center justify-between">
             <TabsList className="bg-muted/50 p-1">
               <TabsTrigger value="body" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
                 Response Body
@@ -169,33 +182,78 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                 )}
               </TabsTrigger>
             </TabsList>
+            {isJsonResponse && (
+              <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/50">
+                <Button
+                  variant={viewMode === 'diff' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setViewMode('diff')}
+                  className="h-7 px-2 gap-1"
+                >
+                  <Rows3 className="h-3.5 w-3.5" />
+                  <span className="text-xs">Diff</span>
+                </Button>
+                <Button
+                  variant={viewMode === 'foldable' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setViewMode('foldable')}
+                  className="h-7 px-2 gap-1"
+                >
+                  <FoldVertical className="h-3.5 w-3.5" />
+                  <span className="text-xs">Foldable</span>
+                </Button>
+              </div>
+            )}
           </div>
           
           <TabsContent value="body" className="m-0 border-t mt-4">
-            <div className="grid grid-cols-2 divide-x">
-              <DiffPanel
-                title="Original Domain"
-                lines={bodyDiff.left}
-                lineCount={original.body.split('\n').length}
-                removals={bodyDiff.removals}
-                side="left"
-                content={original.body}
-                icon={Globe}
-                accentColor="primary"
-                isJson={true}
-              />
-              <DiffPanel
-                title="Localhost"
-                lines={bodyDiff.right}
-                lineCount={localhost.body.split('\n').length}
-                additions={bodyDiff.additions}
-                side="right"
-                content={localhost.body}
-                icon={Server}
-                accentColor="accent"
-                isJson={true}
-              />
-            </div>
+            {viewMode === 'diff' ? (
+              <div className="grid grid-cols-2 divide-x">
+                <DiffPanel
+                  title="Original Domain"
+                  lines={bodyDiff.left}
+                  lineCount={original.body.split('\n').length}
+                  removals={bodyDiff.removals}
+                  side="left"
+                  content={original.body}
+                  icon={Globe}
+                  accentColor="primary"
+                  isJson={true}
+                />
+                <DiffPanel
+                  title="Localhost"
+                  lines={bodyDiff.right}
+                  lineCount={localhost.body.split('\n').length}
+                  additions={bodyDiff.additions}
+                  side="right"
+                  content={localhost.body}
+                  icon={Server}
+                  accentColor="accent"
+                  isJson={true}
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 divide-x">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 p-3 border-b bg-gradient-to-r from-primary/10 to-card">
+                    <div className="p-1.5 rounded-lg bg-primary/10">
+                      <Globe className="h-4 w-4 text-primary" />
+                    </div>
+                    <span className="font-semibold text-sm">Original Domain</span>
+                  </div>
+                  <FoldableJson content={formatJson(original.body)} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 p-3 border-b bg-gradient-to-r from-accent/10 to-card">
+                    <div className="p-1.5 rounded-lg bg-accent/10">
+                      <Server className="h-4 w-4 text-accent" />
+                    </div>
+                    <span className="font-semibold text-sm">Localhost</span>
+                  </div>
+                  <FoldableJson content={formatJson(localhost.body)} />
+                </div>
+              </div>
+            )}
           </TabsContent>
           
           <TabsContent value="headers" className="m-0 border-t mt-4">
