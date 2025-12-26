@@ -94,7 +94,8 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
                           onClick={() => loadFromHistory(item.command, item.localhostUrl)}
                         >
                           <div className="flex-1 min-w-0">
-                            <p className="font-mono text-xs truncate">{truncateCommand(item.command)}</p>
+                            <p className="font-semibold text-sm text-foreground truncate">{item.label}</p>
+                            <p className="font-mono text-xs text-muted-foreground truncate mt-0.5">{truncateCommand(item.command)}</p>
                             <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                               <Clock className="h-3 w-3" />
                               {formatTimestamp(item.timestamp)}
