@@ -6,7 +6,7 @@ import { Copy, Minus, Plus, Globe, Server, Code2, Rows3, FoldVertical } from 'lu
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { ApiResponse } from '@/lib/requestExecutor';
-import { computeDiff, formatJson, formatHeaders, DiffLine } from '@/lib/diffAlgorithm';
+import { computeDiff, formatJson, formatHeaders, DiffLine, DiffSegment } from '@/lib/diffAlgorithm';
 import { cn } from '@/lib/utils';
 import { JsonSyntaxHighlight } from './JsonSyntaxHighlight';
 import { FoldableJson } from './FoldableJson';
@@ -16,10 +16,44 @@ interface DiffViewerProps {
   localhost: ApiResponse;
 }
 
+function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'left' | 'right' }) {
+  return (
+    <>
+      {segments.map((seg, idx) => {
+        if (seg.type === 'unchanged') {
+          return <span key={idx}>{seg.text}</span>;
+        }
+        if (side === 'left' && seg.type === 'removed') {
+          return (
+            <span 
+              key={idx} 
+              className="bg-[hsl(var(--diff-removed))/0.3] text-[hsl(var(--diff-removed))] rounded-sm"
+            >
+              {seg.text}
+            </span>
+          );
+        }
+        if (side === 'right' && seg.type === 'added') {
+          return (
+            <span 
+              key={idx} 
+              className="bg-[hsl(var(--diff-added))/0.3] text-[hsl(var(--diff-added))] rounded-sm"
+            >
+              {seg.text}
+            </span>
+          );
+        }
+        return <span key={idx}>{seg.text}</span>;
+      })}
+    </>
+  );
+}
+
 function DiffLineComponent({ line, side, isJson }: { line: DiffLine; side: 'left' | 'right'; isJson?: boolean }) {
   const bgClass = {
     added: 'bg-[hsl(var(--diff-added-bg))]',
     removed: 'bg-[hsl(var(--diff-removed-bg))]',
+    modified: side === 'left' ? 'bg-[hsl(var(--diff-removed-bg))]' : 'bg-[hsl(var(--diff-added-bg))]',
     unchanged: '',
     empty: 'bg-muted/30',
   }[line.type];
@@ -27,6 +61,7 @@ function DiffLineComponent({ line, side, isJson }: { line: DiffLine; side: 'left
   const textClass = {
     added: 'text-[hsl(var(--diff-added))]',
     removed: 'text-[hsl(var(--diff-removed))]',
+    modified: '',
     unchanged: 'text-foreground',
     empty: '',
   }[line.type];
@@ -37,11 +72,17 @@ function DiffLineComponent({ line, side, isJson }: { line: DiffLine; side: 'left
         {line.lineNumber ?? ''}
       </div>
       <div className="w-6 flex-shrink-0 flex items-center justify-center text-xs">
-        {line.type === 'added' && <Plus className="h-3 w-3 text-[hsl(var(--diff-added))]" />}
-        {line.type === 'removed' && <Minus className="h-3 w-3 text-[hsl(var(--diff-removed))]" />}
+        {(line.type === 'added' || (line.type === 'modified' && side === 'right')) && (
+          <Plus className="h-3 w-3 text-[hsl(var(--diff-added))]" />
+        )}
+        {(line.type === 'removed' || (line.type === 'modified' && side === 'left')) && (
+          <Minus className="h-3 w-3 text-[hsl(var(--diff-removed))]" />
+        )}
       </div>
-      <pre className={cn('flex-1 px-2 py-0.5 overflow-x-auto whitespace-pre', line.type !== 'unchanged' && textClass)}>
-        {isJson && line.type === 'unchanged' ? (
+      <pre className={cn('flex-1 px-2 py-0.5 overflow-x-auto whitespace-pre', textClass)}>
+        {line.type === 'modified' && line.segments ? (
+          <InlineSegments segments={line.segments} side={side} />
+        ) : isJson && line.type === 'unchanged' ? (
           <JsonSyntaxHighlight content={line.content || ' '} />
         ) : (
           line.content || ' '
