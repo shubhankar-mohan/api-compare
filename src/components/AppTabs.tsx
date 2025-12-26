@@ -16,13 +16,13 @@ export function AppTabs({ mode, onModeChange }: AppTabsProps) {
         active={mode === 'curl-diff'}
         onClick={() => onModeChange('curl-diff')}
         icon={Terminal}
-        label="cURL Diff"
+        label="API Compare"
       />
       <TabButton
         active={mode === 'text-diff'}
         onClick={() => onModeChange('text-diff')}
         icon={FileText}
-        label="Text Diff"
+        label="Text Compare"
       />
     </div>
   );

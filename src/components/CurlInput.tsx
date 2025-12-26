@@ -60,11 +60,11 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
           <div className="p-2.5 rounded-xl bg-primary/20 shadow-sm">
             <Terminal className="h-5 w-5 text-primary" />
           </div>
-          <span>cURL Command</span>
+          <span>cURL Diff</span>
           <Sparkles className="h-4 w-4 text-accent ml-auto" />
         </CardTitle>
         <CardDescription className="text-base">
-          Paste your cURL command to compare responses between production and localhost
+          Compare API responses between production and localhost environments
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-6">
