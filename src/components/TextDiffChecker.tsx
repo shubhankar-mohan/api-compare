@@ -364,7 +364,7 @@ export function TextDiffChecker() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-sm font-semibold">Original Text</Label>
+                  <Label className="text-sm font-semibold">Text A</Label>
                   <div className="flex items-center gap-1">
                     <Button
                       type="button"
@@ -377,6 +377,20 @@ export function TextDiffChecker() {
                     >
                       <Wand2 className="h-3.5 w-3.5" />
                       <span className="text-xs">Format</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        navigator.clipboard.writeText(leftText);
+                        toast({ title: 'Copied!', description: 'Text A copied to clipboard' });
+                      }}
+                      disabled={!leftText.trim()}
+                      className="h-7 px-2 text-muted-foreground hover:text-foreground"
+                      title="Copy to clipboard"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
                     </Button>
                     <Button
                       type="button"
@@ -399,7 +413,7 @@ export function TextDiffChecker() {
               </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-sm font-semibold">Modified Text</Label>
+                  <Label className="text-sm font-semibold">Text B</Label>
                   <div className="flex items-center gap-1">
                     <Button
                       type="button"
@@ -412,6 +426,20 @@ export function TextDiffChecker() {
                     >
                       <Wand2 className="h-3.5 w-3.5" />
                       <span className="text-xs">Format</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        navigator.clipboard.writeText(rightText);
+                        toast({ title: 'Copied!', description: 'Text B copied to clipboard' });
+                      }}
+                      disabled={!rightText.trim()}
+                      className="h-7 px-2 text-muted-foreground hover:text-foreground"
+                      title="Copy to clipboard"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
                     </Button>
                     <Button
                       type="button"
@@ -476,7 +504,7 @@ export function TextDiffChecker() {
             <CardContent className="p-0">
               <div className="grid grid-cols-2 divide-x border-t">
                 <DiffPanel
-                  title="Original"
+                  title="Text A"
                   lines={diff.left}
                   lineCount={leftText.split('\n').length}
                   removals={diff.removals}
@@ -487,7 +515,7 @@ export function TextDiffChecker() {
                   isJson={isJson}
                 />
                 <DiffPanel
-                  title="Modified"
+                  title="Text B"
                   lines={diff.right}
                   lineCount={rightText.split('\n').length}
                   additions={diff.additions}
