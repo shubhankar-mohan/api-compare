@@ -60,9 +60,7 @@ const Index = () => {
             <div className="flex items-center gap-3">
               <CurlDiffLogo className="h-10 w-10" />
               <div>
-                <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-                  SmartDiff
-                </h1>
+                <h1 className="text-xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">DiffChecker</h1>
                 <p className="text-sm text-muted-foreground">
                   Compare <span className="font-bold">Offline</span>  - Your data stays with you
                 </p>
