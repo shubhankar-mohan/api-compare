@@ -13,61 +13,46 @@ import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
 import { toast } from '@/hooks/use-toast';
 import { ExternalLink, ArrowRightLeft, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-
 const Index = () => {
   const [mode, setMode] = useState<AppMode>('curl-diff');
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ComparisonResult | null>(null);
-
   const handleCompare = async (curlCommand: string, localhostUrl: string) => {
     setIsLoading(true);
     setResult(null);
-
     try {
       const parsed = parseCurl(curlCommand);
-      
       if (!parsed.url) {
         toast({
           title: 'Invalid cURL',
           description: 'Could not extract URL from the cURL command',
-          variant: 'destructive',
+          variant: 'destructive'
         });
         return;
       }
-
       toast({
         title: 'Executing requests...',
-        description: `Comparing ${parsed.method} requests`,
+        description: `Comparing ${parsed.method} requests`
       });
-
       const comparisonResult = await executeComparison(parsed, localhostUrl);
       setResult(comparisonResult);
-
-      const hasDiff = comparisonResult.original.body !== comparisonResult.localhost.body ||
-                      comparisonResult.original.status !== comparisonResult.localhost.status;
-
+      const hasDiff = comparisonResult.original.body !== comparisonResult.localhost.body || comparisonResult.original.status !== comparisonResult.localhost.status;
       toast({
         title: 'Comparison complete',
-        description: hasDiff ? 'Differences found between responses' : 'Responses are identical',
+        description: hasDiff ? 'Differences found between responses' : 'Responses are identical'
       });
     } catch (error) {
       toast({
         title: 'Error',
         description: error instanceof Error ? error.message : 'Failed to execute comparison',
-        variant: 'destructive',
+        variant: 'destructive'
       });
     } finally {
       setIsLoading(false);
     }
   };
-
-  const bodyDiff = result ? computeDiff(
-    formatJson(result.original.body),
-    formatJson(result.localhost.body)
-  ) : null;
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex flex-col">
+  const bodyDiff = result ? computeDiff(formatJson(result.original.body), formatJson(result.localhost.body)) : null;
+  return <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 flex flex-col">
       {/* Header */}
       <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50 shadow-sm">
         <div className="max-w-6xl mx-auto px-4 py-4">
@@ -79,19 +64,14 @@ const Index = () => {
                   SmartDiff
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                  Compare <span className="font-bold">offline</span> — your data stays with you
+                  Compare <span className="font-bold">Offline</span>  - Your data stays with you
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
               <AppTabs mode={mode} onModeChange={setMode} />
               <ThemeToggle />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => window.open(window.location.href, '_blank')}
-                className="shadow-sm hover:shadow-md transition-shadow hidden sm:flex"
-              >
+              <Button variant="outline" size="sm" onClick={() => window.open(window.location.href, '_blank')} className="shadow-sm hover:shadow-md transition-shadow hidden sm:flex">
                 <ExternalLink className="h-4 w-4 mr-1" />
                 <span>Open in new tab</span>
               </Button>
@@ -102,31 +82,16 @@ const Index = () => {
 
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-8 flex-1 w-full">
-        {mode === 'curl-diff' ? (
-          <>
+        {mode === 'curl-diff' ? <>
             {/* Input Section */}
             <CurlInput onSubmit={handleCompare} isLoading={isLoading} />
 
             {/* Results Section */}
-            {result && (
-              result.original.success && result.localhost.success ? (
-                <>
-                  <SummaryCard 
-                    original={result.original} 
-                    localhost={result.localhost}
-                    hasDifferences={bodyDiff?.hasDifferences ?? false}
-                  />
-                  <DiffViewer 
-                    original={result.original} 
-                    localhost={result.localhost} 
-                  />
-                </>
-              ) : (
-                <TroubleshootSection original={result.original} localhost={result.localhost} />
-              )
-            )}
-            {!result && !isLoading && (
-              <div className="text-center py-20 px-4">
+            {result && (result.original.success && result.localhost.success ? <>
+                  <SummaryCard original={result.original} localhost={result.localhost} hasDifferences={bodyDiff?.hasDifferences ?? false} />
+                  <DiffViewer original={result.original} localhost={result.localhost} />
+                </> : <TroubleshootSection original={result.original} localhost={result.localhost} />)}
+            {!result && !isLoading && <div className="text-center py-20 px-4">
                 <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/20 to-accent/20 mb-6 shadow-lg">
                   <ArrowRightLeft className="h-10 w-10 text-primary" />
                 </div>
@@ -159,12 +124,8 @@ const Index = () => {
                     </li>
                   </ul>
                 </div>
-              </div>
-            )}
-          </>
-        ) : (
-          <TextDiffChecker />
-        )}
+              </div>}
+          </> : <TextDiffChecker />}
       </main>
 
       {/* Footer */}
@@ -175,8 +136,6 @@ const Index = () => {
           </p>
         </div>
       </footer>
-    </div>
-  );
+    </div>;
 };
-
 export default Index;
