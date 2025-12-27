@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CurlInput } from '@/components/CurlInput';
 import { SummaryCard } from '@/components/SummaryCard';
 import { DiffViewer } from '@/components/DiffViewer';
@@ -12,11 +12,21 @@ import { parseCurl } from '@/lib/curlParser';
 import { executeComparison, ComparisonResult } from '@/lib/requestExecutor';
 import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
 import { toast } from '@/hooks/use-toast';
-import { ExternalLink, ArrowRightLeft, Sparkles } from 'lucide-react';
+import { ExternalLink, ArrowRightLeft, Sparkles, Github, Bug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
+const GITHUB_REPO_URL = 'https://github.com/AshishVeda/DiffChecker';
+const GITHUB_ISSUES_URL = 'https://github.com/AshishVeda/DiffChecker/issues';
+
 const Index = () => {
-  const [mode, setMode] = useState<AppMode>('curl-diff');
+  const [mode, setMode] = useState<AppMode>(() => {
+    const saved = localStorage.getItem('diffchecker-mode');
+    return (saved === 'curl-diff' || saved === 'text-diff') ? saved : 'text-diff';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('diffchecker-mode', mode);
+  }, [mode]);
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ComparisonResult | null>(null);
   const handleCompare = async (curlCommand: string, localhostUrl: string) => {
@@ -143,9 +153,31 @@ const Index = () => {
       {/* Footer */}
       <footer className="border-t bg-card/50">
         <div className="max-w-6xl mx-auto px-4 py-6">
-          <p className="text-sm text-muted-foreground text-center">
-            Created with ❤️ by <span className="font-semibold text-foreground">Virtualis World</span>
-          </p>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p className="text-sm text-muted-foreground">
+              Created with ❤️ by <span className="font-semibold text-foreground">Virtualis World</span>
+            </p>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => window.open(GITHUB_ISSUES_URL, '_blank')}
+                className="text-muted-foreground hover:text-foreground gap-1.5"
+              >
+                <Bug className="h-4 w-4" />
+                <span>Report Issue</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => window.open(GITHUB_REPO_URL, '_blank')}
+                className="text-muted-foreground hover:text-foreground gap-1.5"
+              >
+                <Github className="h-4 w-4" />
+                <span>Source Code</span>
+              </Button>
+            </div>
+          </div>
         </div>
       </footer>
     </div>;
