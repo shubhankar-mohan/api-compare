@@ -1,4 +1,14 @@
+# Google AdSense
+User-agent: Mediapartners-Google
+Allow: /
+
+User-agent: AdsBot-Google
+Allow: /
+
 User-agent: Googlebot
+Allow: /
+
+User-agent: Googlebot-Image
 Allow: /
 
 User-agent: Bingbot
@@ -12,3 +22,6 @@ Allow: /
 
 User-agent: *
 Allow: /
+
+# Sitemap location (if you have one)
+# Sitemap: https://yourdomain.com/sitemap.xml
