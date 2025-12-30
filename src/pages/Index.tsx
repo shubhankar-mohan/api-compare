@@ -15,8 +15,8 @@ import { toast } from '@/hooks/use-toast';
 import { ExternalLink, ArrowRightLeft, Sparkles, Github, Bug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-const GITHUB_REPO_URL = 'https://github.com/AshishVeda/DiffChecker';
-const GITHUB_ISSUES_URL = 'https://github.com/AshishVeda/DiffChecker/issues';
+const GITHUB_REPO_URL = 'https://github.com/shubhankar-mohan/api-compare';
+const GITHUB_ISSUES_URL = 'https://github.com/shubhankar-mohan/api-compare/issues';
 
 const Index = () => {
   const [mode, setMode] = useState<AppMode>(() => {
@@ -144,9 +144,17 @@ const Index = () => {
           {/* Right Sidebar - Ads */}
           <aside className="w-[300px] flex-shrink-0 hidden xl:block">
             <div className="sticky top-24 space-y-6">
-              <AdBanner adSlot="YOUR_AD_SLOT_1" format="vertical" />
+              <AdBanner adSlot="1234567890" format="vertical" />
+              <AdBanner adSlot="9876543210" format="rectangle" />
             </div>
           </aside>
+        </div>
+      </div>
+
+      {/* Bottom Ad Banner */}
+      <div className="w-full px-4 py-6 bg-background border-t">
+        <div className="max-w-6xl mx-auto">
+          <AdBanner adSlot="5555555555" format="horizontal" />
         </div>
       </div>
 

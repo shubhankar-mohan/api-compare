@@ -1,8 +1,30 @@
-# Welcome to your Lovable project
+# DiffChecker - API & Text Comparison Tool
 
-## Project info
+## About
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+DiffChecker is a powerful offline comparison tool that helps developers compare API responses and text content. Built with privacy in mind, all comparisons happen locally in your browser - your data never leaves your machine.
+
+### Key Features
+
+- **API Response Comparison**: Compare API responses between production and localhost environments using cURL commands
+- **Text Diff Checker**: Compare any two text inputs with visual diff highlighting
+- **Privacy-First**: All processing happens offline in your browser
+- **Visual Diff Viewer**: Side-by-side comparison with highlighted differences
+- **cURL Support**: Supports GET, POST, PUT, PATCH methods with headers and request bodies
+- **JSON Formatting**: Automatically formats and beautifies JSON responses
+- **Dark/Light Mode**: Toggle between themes for comfortable viewing
+
+## Use Cases
+
+- **API Development**: Compare responses between production and development environments
+- **Debugging**: Identify differences in API responses during troubleshooting
+- **Text Comparison**: Compare configuration files, code snippets, or any text content
+- **Testing**: Verify API consistency across different environments
+- **Migration Validation**: Ensure API compatibility when migrating services
+
+## Project Info
+
+**GitHub Repository**: https://github.com/shubhankar-mohan/api-compare
 
 ## How can I edit this code?
 
@@ -10,7 +32,7 @@ There are several ways of editing your application.
 
 **Use Lovable**
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+If you used Lovable to create this project, you can visit your project page and start prompting.
 
 Changes made via Lovable will be committed automatically to this repo.
 
@@ -62,7 +84,7 @@ This project is built with:
 
 ## How can I deploy this project?
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+If you're using Lovable, open your project and click on Share -> Publish.
 
 ## Can I connect a custom domain to my Lovable project?
 
