@@ -28,9 +28,9 @@ export function AdBanner({
   }, []);
 
   const sizeClasses = {
-    auto: 'min-h-[250px]',
-    rectangle: 'w-[300px] h-[250px]',
-    vertical: 'w-[300px] h-[600px]',
+    auto: 'min-h-[100px]',
+    rectangle: 'w-full aspect-square max-w-[300px]',
+    vertical: 'w-full min-h-[200px] max-w-[300px]',
     horizontal: 'w-full h-[90px]',
   };
 
@@ -45,9 +45,9 @@ export function AdBanner({
     >
       {/* Development placeholder - replace with actual AdSense code in production */}
       {process.env.NODE_ENV === 'development' ? (
-        <div className="text-center text-muted-foreground text-sm p-4">
-          <p className="font-medium">Ad Space</p>
-          <p className="text-xs mt-1">{format === 'vertical' ? '300x600' : format === 'rectangle' ? '300x250' : format === 'horizontal' ? '728x90' : 'Responsive'}</p>
+        <div className="text-center text-muted-foreground p-2">
+          <p className="text-xs font-medium">Ad Space</p>
+          <p className="text-[10px] mt-1">{format === 'vertical' ? 'Vertical' : format === 'rectangle' ? 'Square' : format === 'horizontal' ? 'Banner' : 'Auto'}</p>
         </div>
       ) : (
         <ins

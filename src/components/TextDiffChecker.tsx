@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
+import { Separator } from '@/components/ui/separator';
 import { 
   ArrowRightLeft, FileText, Copy, Trash2, Minus, Plus, Globe, Server,
-  Wand2, CaseLower, SortAsc, WrapText, Scissors, RotateCcw
+  Wand2, CaseLower, SortAsc, WrapText, Scissors, RotateCcw, Settings
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { computeDiff, formatJson, DiffLine, DiffSegment } from '@/lib/diffAlgorithm';
@@ -68,11 +69,11 @@ function DiffLineComponent({ line, isJson, side }: { line: DiffLine; isJson?: bo
   const showIcon = line.type === 'added' || line.type === 'removed' || line.type === 'modified';
 
   return (
-    <div className={cn('flex font-mono text-sm', bgClass)}>
-      <div className="w-12 flex-shrink-0 px-2 py-0.5 text-right text-[hsl(var(--diff-line-number))] bg-[hsl(var(--diff-line-number-bg))] select-none border-r border-border">
+    <div className={cn('flex font-mono text-sm min-w-fit', bgClass)}>
+      <div className="w-12 flex-shrink-0 px-2 py-0.5 text-right text-[hsl(var(--diff-line-number))] bg-[hsl(var(--diff-line-number-bg))] select-none border-r border-border sticky left-0 z-10">
         {line.lineNumber ?? ''}
       </div>
-      <div className="w-6 flex-shrink-0 flex items-center justify-center text-xs">
+      <div className="w-6 flex-shrink-0 flex items-center justify-center text-xs sticky left-12 bg-inherit z-10">
         {(line.type === 'added' || (line.type === 'modified' && side === 'right')) && (
           <Plus className="h-3 w-3 text-[hsl(var(--diff-added))]" />
         )}
@@ -80,7 +81,7 @@ function DiffLineComponent({ line, isJson, side }: { line: DiffLine; isJson?: bo
           <Minus className="h-3 w-3 text-[hsl(var(--diff-removed))]" />
         )}
       </div>
-      <pre className={cn('flex-1 px-2 py-0.5 overflow-x-auto whitespace-pre', textClass)}>
+      <pre className={cn('px-2 py-0.5 whitespace-pre', textClass)}>
         {line.type === 'modified' && line.segments ? (
           <InlineSegments segments={line.segments} side={side} />
         ) : isJson && line.type === 'unchanged' ? (
@@ -127,7 +128,7 @@ function DiffPanel({
   const lineText = lineCount === 1 ? '1 line' : `${lineCount} lines`;
 
   return (
-    <div className="flex flex-col min-w-0">
+    <div className="flex flex-col min-w-0 overflow-hidden">
       <div className={cn(
         "flex items-center justify-between p-3 border-b sticky top-0 z-10",
         accentColor === 'primary' ? 'bg-gradient-to-r from-primary/10 to-card' : 'bg-gradient-to-r from-accent/10 to-card'
@@ -163,7 +164,7 @@ function DiffPanel({
           </Button>
         </div>
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 overflow-x-auto overflow-y-hidden">
         {lines.map((line, idx) => (
           <DiffLineComponent key={idx} line={line} isJson={isJson} side={side} />
         ))}
@@ -185,13 +186,14 @@ function ToolButton({ icon: Icon, label, onClick, disabled }: ToolButtonProps) {
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "flex items-center gap-2 w-full px-3 py-2 text-sm text-left rounded-lg transition-colors",
+        "flex items-center gap-1.5 w-full px-2 py-1.5 text-xs text-left rounded-lg transition-colors",
         "hover:bg-muted text-foreground",
         disabled && "opacity-50 cursor-not-allowed"
       )}
+      title={label}
     >
-      <Icon className="h-4 w-4 text-muted-foreground" />
-      {label}
+      <Icon className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+      <span className="truncate">{label}</span>
     </button>
   );
 }
@@ -201,6 +203,7 @@ export function TextDiffChecker() {
   const [rightText, setRightText] = useState('');
   const [hasCompared, setHasCompared] = useState(false);
   const [realTimeDiff, setRealTimeDiff] = useState(false);
+  const [showMobileTools, setShowMobileTools] = useState(false);
 
   const isJson = useMemo(() => {
     try {
@@ -284,27 +287,28 @@ export function TextDiffChecker() {
   };
 
   return (
-    <div className="flex gap-6">
-      {/* Left Sidebar - Tools */}
-      <div className="w-56 flex-shrink-0 hidden lg:block">
-        <Card className="sticky top-24 border-0 shadow-lg">
-          <CardContent className="p-4 space-y-4">
+    <div className="flex gap-3 relative">
+      {/* Left Sidebar - Tools for Desktop */}
+      <div className="w-36 flex-shrink-0 hidden lg:block">
+        <Card className="sticky top-24 border-0 shadow-md">
+          <CardContent className="p-3 space-y-3">
             {/* Toggles */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="realtime" className="text-sm">Real-time diff</Label>
+            <div className="space-y-2">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="realtime" className="text-xs font-medium">Real-time diff</Label>
                 <Switch 
                   id="realtime" 
                   checked={realTimeDiff} 
                   onCheckedChange={setRealTimeDiff}
+                  className="ml-0"
                 />
               </div>
             </div>
 
             {/* Tools Section */}
             <div className="pt-2 border-t">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Tools</p>
-              <div className="space-y-1">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Tools</p>
+              <div className="space-y-0.5">
                 <ToolButton
                   icon={CaseLower}
                   label="To lowercase"
@@ -346,7 +350,68 @@ export function TextDiffChecker() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 space-y-6">
+      <div className="flex-1 space-y-6 min-w-0 overflow-hidden">
+        {/* Mobile Tools Button */}
+        <div className="lg:hidden fixed bottom-6 right-6 z-50">
+          <Button
+            onClick={() => setShowMobileTools(!showMobileTools)}
+            className="rounded-full h-12 w-12 shadow-lg"
+            size="icon"
+          >
+            <Settings className="h-5 w-5" />
+          </Button>
+          
+          {/* Mobile Tools Dropdown */}
+          {showMobileTools && (
+            <Card className="absolute bottom-14 right-0 w-48 shadow-xl">
+              <CardContent className="p-3 space-y-2">
+                <div className="flex items-center justify-between mb-2">
+                  <Label className="text-xs font-medium">Real-time diff</Label>
+                  <Switch 
+                    checked={realTimeDiff} 
+                    onCheckedChange={setRealTimeDiff}
+                    className="scale-90"
+                  />
+                </div>
+                <Separator className="my-2" />
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase">Tools</p>
+                <div className="space-y-0.5">
+                  <ToolButton
+                    icon={CaseLower}
+                    label="To lowercase"
+                    onClick={() => { applyTool('lowercase'); setShowMobileTools(false); }}
+                    disabled={!leftText.trim() && !rightText.trim()}
+                  />
+                  <ToolButton
+                    icon={SortAsc}
+                    label="Sort lines"
+                    onClick={() => { applyTool('sort'); setShowMobileTools(false); }}
+                    disabled={!leftText.trim() && !rightText.trim()}
+                  />
+                  <ToolButton
+                    icon={WrapText}
+                    label="Replace breaks"
+                    onClick={() => { applyTool('replace-breaks'); setShowMobileTools(false); }}
+                    disabled={!leftText.trim() && !rightText.trim()}
+                  />
+                  <ToolButton
+                    icon={Scissors}
+                    label="Trim whitespace"
+                    onClick={() => { applyTool('trim'); setShowMobileTools(false); }}
+                    disabled={!leftText.trim() && !rightText.trim()}
+                  />
+                  <ToolButton
+                    icon={RotateCcw}
+                    label="Clear all"
+                    onClick={() => { handleClear(); setShowMobileTools(false); }}
+                    disabled={!leftText.trim() && !rightText.trim()}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
         {/* Input Section */}
         <Card className="overflow-hidden border-0 shadow-lg">
           <CardHeader className="bg-gradient-to-r from-accent/10 via-primary/10 to-accent/10 pb-6">
@@ -361,7 +426,7 @@ export function TextDiffChecker() {
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-6">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label className="text-sm font-semibold">Text A</Label>
@@ -502,7 +567,7 @@ export function TextDiffChecker() {
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="grid grid-cols-2 divide-x border-t">
+              <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x border-t overflow-hidden">
                 <DiffPanel
                   title="Text A"
                   lines={diff.left}

@@ -92,7 +92,7 @@ const Index = () => {
 
       {/* Main Content with Right Sidebar */}
       <div className="flex-1 flex justify-center">
-        <div className="flex gap-6 px-4 py-8 w-full max-w-[1400px]">
+        <div className="flex gap-4 px-3 py-6 w-full max-w-[1600px]">
           {/* Main Content */}
           <main className="flex-1 space-y-8 min-w-0">
             {mode === 'curl-diff' ? <>
@@ -142,10 +142,11 @@ const Index = () => {
           </main>
 
           {/* Right Sidebar - Ads */}
-          <aside className="w-[300px] flex-shrink-0 hidden xl:block">
-            <div className="sticky top-24 space-y-6">
-              <AdBanner adSlot="1234567890" format="vertical" />
-              <AdBanner adSlot="9876543210" format="rectangle" />
+          <aside className="w-36 flex-shrink-0 hidden xl:block">
+            <div className="sticky top-24 space-y-3">
+              <AdBanner adSlot="1234567890" format="rectangle" className="w-full" />
+              <AdBanner adSlot="9876543210" format="auto" className="w-full" />
+              <AdBanner adSlot="5555555555" format="rectangle" className="w-full" />
             </div>
           </aside>
         </div>
