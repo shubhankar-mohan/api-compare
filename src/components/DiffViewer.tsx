@@ -37,7 +37,7 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
           return (
             <span 
               key={idx} 
-              className="bg-[hsl(var(--diff-removed))/0.3] text-[hsl(var(--diff-removed))] rounded-sm"
+              className="bg-red-500/30 text-red-600 dark:bg-red-500/20 dark:text-red-400 px-0.5 rounded-sm font-semibold"
             >
               {seg.text}
             </span>
@@ -47,7 +47,7 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
           return (
             <span 
               key={idx} 
-              className="bg-[hsl(var(--diff-added))/0.3] text-[hsl(var(--diff-added))] rounded-sm"
+              className="bg-green-500/30 text-green-600 dark:bg-green-500/20 dark:text-green-400 px-0.5 rounded-sm font-semibold"
             >
               {seg.text}
             </span>
@@ -75,7 +75,7 @@ function DiffLineComponent({
   const bgClass = {
     added: 'bg-[hsl(var(--diff-added-bg))]',
     removed: 'bg-[hsl(var(--diff-removed-bg))]',
-    modified: side === 'left' ? 'bg-[hsl(var(--diff-removed-bg))]' : 'bg-[hsl(var(--diff-added-bg))]',
+    modified: 'bg-yellow-50 dark:bg-yellow-900/10', // Subtle background for modified lines
     unchanged: '',
     empty: 'bg-muted/30',
   }[line.type];

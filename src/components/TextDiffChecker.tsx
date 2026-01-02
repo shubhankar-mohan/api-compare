@@ -8,7 +8,8 @@ import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { 
   ArrowRightLeft, FileText, Copy, Trash2, Minus, Plus, Globe, Server,
-  Wand2, CaseLower, SortAsc, WrapText, Scissors, RotateCcw, Settings
+  Wand2, CaseLower, SortAsc, WrapText, Scissors, RotateCcw, Settings,
+  ChevronLeft, ChevronRight, GitMerge
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { computeDiff, formatJson, DiffLine, DiffSegment } from '@/lib/diffAlgorithm';
@@ -49,7 +50,23 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
   );
 }
 
-function DiffLineComponent({ line, isJson, side }: { line: DiffLine; isJson?: boolean; side: 'left' | 'right' }) {
+function DiffLineComponent({ 
+  line, 
+  isJson, 
+  side, 
+  onAcceptChange,
+  onRejectChange,
+  showMergeControls,
+  lineIndex
+}: { 
+  line: DiffLine; 
+  isJson?: boolean; 
+  side: 'left' | 'right';
+  onAcceptChange?: (lineIndex: number, side: 'left' | 'right') => void;
+  onRejectChange?: (lineIndex: number, side: 'left' | 'right') => void;
+  showMergeControls?: boolean;
+  lineIndex?: number;
+}) {
   const bgClass = {
     added: 'bg-[hsl(var(--diff-added-bg))]',
     removed: 'bg-[hsl(var(--diff-removed-bg))]',
@@ -67,12 +84,35 @@ function DiffLineComponent({ line, isJson, side }: { line: DiffLine; isJson?: bo
   }[line.type];
 
   const showIcon = line.type === 'added' || line.type === 'removed' || line.type === 'modified';
+  const canMerge = showMergeControls && (line.type === 'added' || line.type === 'removed' || line.type === 'modified');
 
   return (
-    <div className={cn('flex font-mono text-sm min-w-fit', bgClass)}>
+    <div className={cn('flex font-mono text-sm min-w-fit relative group', bgClass)}>
       <div className="w-12 flex-shrink-0 px-2 py-0.5 text-right text-[hsl(var(--diff-line-number))] bg-[hsl(var(--diff-line-number-bg))] select-none border-r border-border sticky left-0 z-10">
         {line.lineNumber ?? ''}
       </div>
+      {canMerge && lineIndex !== undefined && (
+        <div className="absolute -left-24 top-0 h-full flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 p-0 hover:bg-green-500/20"
+            onClick={() => onAcceptChange?.(lineIndex, side)}
+            title="Accept this change"
+          >
+            <ChevronLeft className="h-4 w-4 text-green-600" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 p-0 hover:bg-red-500/20"
+            onClick={() => onRejectChange?.(lineIndex, side)}
+            title="Reject this change"
+          >
+            <ChevronRight className="h-4 w-4 text-red-600" />
+          </Button>
+        </div>
+      )}
       <div className="w-6 flex-shrink-0 flex items-center justify-center text-xs sticky left-12 bg-inherit z-10">
         {(line.type === 'added' || (line.type === 'modified' && side === 'right')) && (
           <Plus className="h-3 w-3 text-[hsl(var(--diff-added))]" />
@@ -105,6 +145,9 @@ function DiffPanel({
   icon: Icon,
   accentColor,
   isJson = false,
+  onAcceptChange,
+  onRejectChange,
+  showMergeControls,
 }: { 
   title: string;
   lines: DiffLine[];
@@ -116,6 +159,9 @@ function DiffPanel({
   icon: typeof Globe;
   accentColor: 'primary' | 'accent';
   isJson?: boolean;
+  onAcceptChange?: (lineIndex: number, side: 'left' | 'right') => void;
+  onRejectChange?: (lineIndex: number, side: 'left' | 'right') => void;
+  showMergeControls?: boolean;
 }) {
   const copyToClipboard = () => {
     navigator.clipboard.writeText(content);
@@ -166,7 +212,16 @@ function DiffPanel({
       </div>
       <div className="min-w-0 overflow-x-auto overflow-y-hidden">
         {lines.map((line, idx) => (
-          <DiffLineComponent key={idx} line={line} isJson={isJson} side={side} />
+          <DiffLineComponent 
+            key={idx} 
+            line={line} 
+            isJson={isJson} 
+            side={side}
+            onAcceptChange={onAcceptChange}
+            onRejectChange={onRejectChange}
+            showMergeControls={showMergeControls}
+            lineIndex={idx}
+          />
         ))}
       </div>
     </div>
@@ -204,6 +259,9 @@ export function TextDiffChecker() {
   const [hasCompared, setHasCompared] = useState(false);
   const [realTimeDiff, setRealTimeDiff] = useState(false);
   const [showMobileTools, setShowMobileTools] = useState(false);
+  const [mergeMode, setMergeMode] = useState(false);
+  const [mergedText, setMergedText] = useState('');
+  const [acceptedChanges, setAcceptedChanges] = useState<Set<string>>(new Set());
 
   const isJson = useMemo(() => {
     try {
@@ -241,6 +299,9 @@ export function TextDiffChecker() {
     setLeftText('');
     setRightText('');
     setHasCompared(false);
+    setMergeMode(false);
+    setMergedText('');
+    setAcceptedChanges(new Set());
   };
 
   const handleFormatJson = (side: 'left' | 'right') => {
@@ -284,6 +345,76 @@ export function TextDiffChecker() {
     } catch {
       return false;
     }
+  };
+
+  const handleAcceptChange = (lineIndex: number, side: 'left' | 'right') => {
+    if (!diff) return;
+    
+    const changeKey = `${lineIndex}-${side}`;
+    const newAccepted = new Set(acceptedChanges);
+    newAccepted.add(changeKey);
+    setAcceptedChanges(newAccepted);
+    
+    // Apply the change to merged text
+    applyMergedChanges(newAccepted);
+  };
+
+  const handleRejectChange = (lineIndex: number, side: 'left' | 'right') => {
+    if (!diff) return;
+    
+    const changeKey = `${lineIndex}-${side}`;
+    const newAccepted = new Set(acceptedChanges);
+    newAccepted.delete(changeKey);
+    setAcceptedChanges(newAccepted);
+    
+    // Apply the change to merged text
+    applyMergedChanges(newAccepted);
+  };
+
+  const applyMergedChanges = (accepted: Set<string>) => {
+    if (!diff) return;
+    
+    const mergedLines: string[] = [];
+    
+    for (let i = 0; i < diff.left.length; i++) {
+      const leftLine = diff.left[i];
+      const rightLine = diff.right[i];
+      const leftAccepted = accepted.has(`${i}-left`);
+      const rightAccepted = accepted.has(`${i}-right`);
+      
+      if (leftLine.type === 'unchanged') {
+        mergedLines.push(leftLine.content);
+      } else if (leftLine.type === 'removed' && !rightAccepted) {
+        mergedLines.push(leftLine.content);
+      } else if (rightLine.type === 'added' && rightAccepted) {
+        mergedLines.push(rightLine.content);
+      } else if (leftLine.type === 'modified') {
+        if (rightAccepted) {
+          mergedLines.push(rightLine.content);
+        } else {
+          mergedLines.push(leftLine.content);
+        }
+      }
+    }
+    
+    setMergedText(mergedLines.filter(line => line !== '').join('\n'));
+  };
+
+  const handleStartMerge = () => {
+    setMergeMode(true);
+    setMergedText(leftText);
+    toast({
+      title: 'Merge Mode',
+      description: 'Click the arrows to accept or reject changes',
+    });
+  };
+
+  const handleFinishMerge = () => {
+    navigator.clipboard.writeText(mergedText);
+    toast({
+      title: 'Merged Result Copied!',
+      description: 'The merged text has been copied to your clipboard',
+    });
   };
 
   return (
@@ -536,6 +667,17 @@ export function TextDiffChecker() {
                 <ArrowRightLeft className="mr-2 h-5 w-5" />
                 Compare Texts
               </Button>
+              {diff?.hasDifferences && !mergeMode && (
+                <Button
+                  onClick={handleStartMerge}
+                  variant="outline"
+                  className="h-12 px-6 border-2 hover:bg-primary/10"
+                  size="lg"
+                >
+                  <GitMerge className="mr-2 h-5 w-5" />
+                  Start Merge
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={handleClear}
@@ -564,6 +706,19 @@ export function TextDiffChecker() {
                 ) : (
                   <Badge variant="success" className="ml-2">Identical</Badge>
                 )}
+                {mergeMode && (
+                  <div className="ml-auto flex items-center gap-2">
+                    <Badge variant="secondary">Merge Mode Active</Badge>
+                    <Button
+                      size="sm"
+                      onClick={handleFinishMerge}
+                      className="gap-1"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Copy Merged Result
+                    </Button>
+                  </div>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
@@ -578,6 +733,9 @@ export function TextDiffChecker() {
                   icon={Globe}
                   accentColor="primary"
                   isJson={isJson}
+                  onAcceptChange={handleAcceptChange}
+                  onRejectChange={handleRejectChange}
+                  showMergeControls={mergeMode}
                 />
                 <DiffPanel
                   title="Text B"
@@ -589,7 +747,58 @@ export function TextDiffChecker() {
                   icon={Server}
                   accentColor="accent"
                   isJson={isJson}
+                  onAcceptChange={handleAcceptChange}
+                  onRejectChange={handleRejectChange}
+                  showMergeControls={mergeMode}
                 />
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        
+        {/* Merged Result Section */}
+        {mergeMode && mergedText && (
+          <Card className="border-0 shadow-lg overflow-hidden">
+            <CardHeader className="pb-4 bg-gradient-to-r from-green-500/10 via-emerald-500/10 to-green-500/10">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-green-500/10">
+                  <GitMerge className="h-5 w-5 text-green-600" />
+                </div>
+                Merged Result
+                <Badge variant="outline" className="ml-2">
+                  {acceptedChanges.size} changes applied
+                </Badge>
+              </CardTitle>
+              <CardDescription>
+                This is the result of applying your selected changes
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6">
+              <Textarea
+                value={mergedText}
+                onChange={(e) => setMergedText(e.target.value)}
+                className="font-mono text-sm min-h-[300px] resize-y bg-muted/50 border-2 focus:border-green-500/50"
+                placeholder="Merged text will appear here..."
+              />
+              <div className="flex gap-3 mt-4">
+                <Button 
+                  onClick={handleFinishMerge}
+                  className="flex-1"
+                  size="lg"
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  Copy to Clipboard
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setMergeMode(false);
+                    setAcceptedChanges(new Set());
+                  }}
+                  size="lg"
+                >
+                  Exit Merge Mode
+                </Button>
               </div>
             </CardContent>
           </Card>
