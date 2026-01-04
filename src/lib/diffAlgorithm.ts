@@ -39,10 +39,21 @@ function lcs<T>(a: T[], b: T[]): number[][] {
   return dp;
 }
 
+// Cache for similarity calculations to avoid redundant computations
+const similarityCache = new Map<string, number>();
+
 // Calculate similarity between two strings (0-1)
 function calculateSimilarity(str1: string, str2: string): number {
   if (str1 === str2) return 1;
   if (!str1 || !str2) return 0;
+  
+  // Create cache key based on string characteristics
+  const cacheKey = `${str1.length}:${str2.length}:${str1.substring(0, 20)}:${str2.substring(0, 20)}`;
+  
+  // Check cache first
+  if (similarityCache.has(cacheKey)) {
+    return similarityCache.get(cacheKey)!;
+  }
   
   const longer = str1.length > str2.length ? str1 : str2;
   const shorter = str1.length > str2.length ? str2 : str1;
@@ -50,7 +61,17 @@ function calculateSimilarity(str1: string, str2: string): number {
   if (longer.length === 0) return 1;
   
   const editDistance = levenshteinDistance(longer, shorter);
-  return (longer.length - editDistance) / longer.length;
+  const similarity = (longer.length - editDistance) / longer.length;
+  
+  // Cache the result (limit cache size to prevent memory issues)
+  if (similarityCache.size > 1000) {
+    // Clear oldest entries
+    const firstKey = similarityCache.keys().next().value;
+    similarityCache.delete(firstKey);
+  }
+  similarityCache.set(cacheKey, similarity);
+  
+  return similarity;
 }
 
 // Levenshtein distance for string similarity
@@ -84,6 +105,14 @@ function levenshteinDistance(str1: string, str2: string): number {
 
 // Compute character-level diff for more precise highlighting
 function computeCharDiff(leftLine: string, rightLine: string): { leftSegments: DiffSegment[]; rightSegments: DiffSegment[] } {
+  // Skip character-level diff for very long lines to improve performance
+  if (leftLine.length > 500 || rightLine.length > 500) {
+    return {
+      leftSegments: [{ text: leftLine, type: 'removed' }],
+      rightSegments: [{ text: rightLine, type: 'added' }]
+    };
+  }
+  
   const leftChars = leftLine.split('');
   const rightChars = rightLine.split('');
   
@@ -136,11 +165,20 @@ function computeCharDiff(leftLine: string, rightLine: string): { leftSegments: D
 
 // Compute word-level diff between two strings
 function computeWordDiff(leftLine: string, rightLine: string): { leftSegments: DiffSegment[]; rightSegments: DiffSegment[] } {
-  // For better granularity, use character-level diff for lines with high similarity
+  // Skip expensive diff for very long lines
+  if (leftLine.length > 1000 || rightLine.length > 1000) {
+    return {
+      leftSegments: [{ text: leftLine, type: 'removed' }],
+      rightSegments: [{ text: rightLine, type: 'added' }]
+    };
+  }
+  
+  // For better granularity, use character-level diff for lines with any similarity
   const similarity = calculateSimilarity(leftLine, rightLine);
   
-  // If lines are very similar, use character-level diff for more precise highlighting
-  if (similarity > 0.5) {
+  // Use character-level diff for lines with at least 20% similarity for more precise highlighting
+  // This will catch JSON property changes, number changes, etc.
+  if (similarity > 0.2 && leftLine.length < 500 && rightLine.length < 500) {
     return computeCharDiff(leftLine, rightLine);
   }
   
@@ -213,9 +251,82 @@ function computeWordDiff(leftLine: string, rightLine: string): { leftSegments: D
   };
 }
 
-export function computeDiff(leftText: string, rightText: string): DiffResult {
+// Simple diff for very small texts
+function computeSimpleDiff(leftLines: string[], rightLines: string[]): DiffResult {
+  const left: DiffLine[] = [];
+  const right: DiffLine[] = [];
+  let additions = 0;
+  let removals = 0;
+  
+  const maxLength = Math.max(leftLines.length, rightLines.length);
+  
+  for (let i = 0; i < maxLength; i++) {
+    if (i < leftLines.length && i < rightLines.length) {
+      if (leftLines[i] === rightLines[i]) {
+        left.push({ content: leftLines[i], type: 'unchanged', lineNumber: i + 1 });
+        right.push({ content: rightLines[i], type: 'unchanged', lineNumber: i + 1 });
+      } else {
+        left.push({ content: leftLines[i], type: 'removed', lineNumber: i + 1 });
+        right.push({ content: rightLines[i], type: 'added', lineNumber: i + 1 });
+        removals++;
+        additions++;
+      }
+    } else if (i < leftLines.length) {
+      left.push({ content: leftLines[i], type: 'removed', lineNumber: i + 1 });
+      right.push({ content: '', type: 'empty', lineNumber: null });
+      removals++;
+    } else {
+      left.push({ content: '', type: 'empty', lineNumber: null });
+      right.push({ content: rightLines[i], type: 'added', lineNumber: i + 1 });
+      additions++;
+    }
+  }
+  
+  return {
+    left,
+    right,
+    additions,
+    removals,
+    hasDifferences: additions > 0 || removals > 0
+  };
+}
+
+export function computeDiff(leftText: string, rightText: string, options?: { advancedMode?: boolean }): DiffResult {
+  // Early exit for identical content
+  if (leftText === rightText) {
+    const lines = leftText.split('\n');
+    const unchangedLines: DiffLine[] = lines.map((line, i) => ({
+      content: line,
+      type: 'unchanged',
+      lineNumber: i + 1
+    }));
+    return {
+      left: unchangedLines,
+      right: [...unchangedLines],
+      additions: 0,
+      removals: 0,
+      hasDifferences: false
+    };
+  }
+  
   const leftLines = leftText.split('\n');
   const rightLines = rightText.split('\n');
+  
+  // Use simple diff for very small texts - but check if lines are similar first
+  if (leftLines.length < 10 && rightLines.length < 10) {
+    // Check if we should use advanced diff even for small texts
+    let shouldUseAdvanced = false;
+    for (let i = 0; i < Math.min(leftLines.length, rightLines.length); i++) {
+      if (leftLines[i] !== rightLines[i] && calculateSimilarity(leftLines[i], rightLines[i]) > 0.2) {
+        shouldUseAdvanced = true;
+        break;
+      }
+    }
+    
+    if (!shouldUseAdvanced) {
+      return computeSimpleDiff(leftLines, rightLines);
+    }
+  }
 
   const dp = lcs(leftLines, rightLines);
   
@@ -249,16 +360,40 @@ export function computeDiff(leftText: string, rightText: string): DiffResult {
       j--;
     } else if (i > 0 && j > 0) {
       // Check if lines are similar enough to pair for inline diff
-      const similarity = calculateSimilarity(leftLines[i - 1], rightLines[j - 1]);
+      const leftLine = leftLines[i - 1];
+      const rightLine = rightLines[j - 1];
       
-      // If lines are at least 30% similar, or if we're at a point where both need to be consumed,
+      // Skip similarity calculation for very long lines or when advanced mode is disabled
+      let similarity = 0;
+      const useAdvanced = options?.advancedMode !== false;
+      
+      if (useAdvanced && leftLine.length < 1000 && rightLine.length < 1000) {
+        similarity = calculateSimilarity(leftLine, rightLine);
+      }
+      
+      // Lower threshold to 20% to catch more similar lines
+      // Also check for common patterns like JSON property changes
+      const hasCommonStructure = (leftLine.includes(':') && rightLine.includes(':')) ||
+                                 (leftLine.includes('=') && rightLine.includes('=')) ||
+                                 (leftLine.trim().startsWith('{') && rightLine.trim().startsWith('{')) ||
+                                 (leftLine.trim().startsWith('[') && rightLine.trim().startsWith('['));
+      
+      // If lines are at least 20% similar, have common structure, or if we're at a point where both need to be consumed,
       // pair them for inline diff
-      if (similarity > 0.3 || dp[i - 1][j] === dp[i][j - 1]) {
-        const { leftSegments, rightSegments } = computeWordDiff(leftLines[i - 1], rightLines[j - 1]);
+      if (similarity > 0.2 || hasCommonStructure || dp[i - 1][j] === dp[i][j - 1]) {
+        let leftSegments: DiffSegment[] | undefined;
+        let rightSegments: DiffSegment[] | undefined;
+        
+        if (useAdvanced) {
+          const result = computeWordDiff(leftLines[i - 1], rightLines[j - 1]);
+          leftSegments = result.leftSegments;
+          rightSegments = result.rightSegments;
+        }
         
         // Only mark as modified if there are actual differences in segments
-        const hasChanges = leftSegments.some(s => s.type !== 'unchanged') || 
-                          rightSegments.some(s => s.type !== 'unchanged');
+        const hasChanges = useAdvanced && leftSegments && rightSegments && 
+                          (leftSegments.some(s => s.type !== 'unchanged') || 
+                          rightSegments.some(s => s.type !== 'unchanged'));
         
         if (hasChanges) {
           tempLeft.unshift({
@@ -275,6 +410,33 @@ export function computeDiff(leftText: string, rightText: string): DiffResult {
           });
           i--;
           j--;
+        } else if (!useAdvanced && leftLines[i - 1] !== rightLines[j - 1]) {
+          // Without advanced mode, treat different lines as removed/added
+          if (dp[i][j - 1] >= dp[i - 1][j]) {
+            tempLeft.unshift({
+              content: '',
+              type: 'empty',
+              lineNumber: null,
+            });
+            tempRight.unshift({
+              content: rightLines[j - 1],
+              type: 'added',
+              lineNumber: j,
+            });
+            j--;
+          } else {
+            tempLeft.unshift({
+              content: leftLines[i - 1],
+              type: 'removed',
+              lineNumber: i,
+            });
+            tempRight.unshift({
+              content: '',
+              type: 'empty',
+              lineNumber: null,
+            });
+            i--;
+          }
         } else {
           // Lines are identical after normalization
           tempLeft.unshift({
@@ -368,6 +530,11 @@ export function formatJson(text: string): string {
   } catch {
     return text;
   }
+}
+
+// Clear similarity cache when needed (e.g., between different comparisons)
+export function clearSimilarityCache(): void {
+  similarityCache.clear();
 }
 
 export function formatHeaders(headers: Record<string, string>): string {

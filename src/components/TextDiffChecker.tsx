@@ -15,6 +15,11 @@ import { toast } from '@/hooks/use-toast';
 import { computeDiff, formatJson, DiffLine, DiffSegment } from '@/lib/diffAlgorithm';
 import { cn } from '@/lib/utils';
 import { JsonSyntaxHighlight } from './JsonSyntaxHighlight';
+import { MergeView } from './MergeView';
+import {
+  Dialog,
+  DialogContent,
+} from '@/components/ui/dialog';
 
 function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'left' | 'right' }) {
   return (
@@ -70,7 +75,7 @@ function DiffLineComponent({
   const bgClass = {
     added: 'bg-[hsl(var(--diff-added-bg))]',
     removed: 'bg-[hsl(var(--diff-removed-bg))]',
-    modified: side === 'left' ? 'bg-[hsl(var(--diff-removed-bg))]' : 'bg-[hsl(var(--diff-added-bg))]',
+    modified: 'bg-yellow-50 dark:bg-yellow-900/10',  // Yellow/amber background for modified lines
     unchanged: '',
     empty: 'bg-muted/30',
   }[line.type];
@@ -262,6 +267,7 @@ export function TextDiffChecker() {
   const [mergeMode, setMergeMode] = useState(false);
   const [mergedText, setMergedText] = useState('');
   const [acceptedChanges, setAcceptedChanges] = useState<Set<string>>(new Set());
+  const [showMergeDialog, setShowMergeDialog] = useState(false);
 
   const isJson = useMemo(() => {
     try {
@@ -289,9 +295,16 @@ export function TextDiffChecker() {
       return;
     }
     setHasCompared(true);
+    
+    // Calculate the difference count based on the current diff
+    const currentDiff = computeDiff(leftText, rightText, { advancedMode: true });
+    const diffCount = currentDiff.additions + currentDiff.removals;
+    
     toast({ 
       title: 'Comparison complete', 
-      description: diff?.hasDifferences ? 'Differences found' : 'Texts are identical' 
+      description: currentDiff.hasDifferences 
+        ? `${diffCount} difference${diffCount === 1 ? '' : 's'} found` 
+        : 'Texts are identical'
     });
   };
 
@@ -418,6 +431,7 @@ export function TextDiffChecker() {
   };
 
   return (
+    <>
     <div className="flex gap-3 relative">
       {/* Left Sidebar - Tools for Desktop */}
       <div className="w-36 flex-shrink-0 hidden lg:block">
@@ -696,30 +710,45 @@ export function TextDiffChecker() {
         {diff && (
           <Card className="border-0 shadow-lg overflow-hidden">
             <CardHeader className="pb-4 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <FileText className="h-5 w-5 text-primary" />
-                </div>
-                Comparison Result
-                {diff.hasDifferences ? (
-                  <Badge variant="warning" className="ml-2">Differences Found</Badge>
-                ) : (
-                  <Badge variant="success" className="ml-2">Identical</Badge>
-                )}
-                {mergeMode && (
-                  <div className="ml-auto flex items-center gap-2">
-                    <Badge variant="secondary">Merge Mode Active</Badge>
-                    <Button
-                      size="sm"
-                      onClick={handleFinishMerge}
-                      className="gap-1"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                      Copy Merged Result
-                    </Button>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <div className="p-2 rounded-lg bg-primary/10">
+                    <FileText className="h-5 w-5 text-primary" />
                   </div>
-                )}
-              </CardTitle>
+                  Comparison Result
+                  {diff.hasDifferences ? (
+                    <Badge variant="warning" className="ml-2">Differences Found</Badge>
+                  ) : (
+                    <Badge variant="success" className="ml-2">Identical</Badge>
+                  )}
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  {diff.hasDifferences && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => setShowMergeDialog(true)}
+                      className="gap-2"
+                    >
+                      <GitMerge className="h-4 w-4" />
+                      <span>Merge Mode</span>
+                    </Button>
+                  )}
+                  {mergeMode && (
+                    <>
+                      <Badge variant="secondary">Merge Mode Active</Badge>
+                      <Button
+                        size="sm"
+                        onClick={handleFinishMerge}
+                        className="gap-1"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        Copy Merged Result
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x border-t overflow-hidden">
@@ -805,5 +834,21 @@ export function TextDiffChecker() {
         )}
       </div>
     </div>
+
+    {/* Merge Dialog */}
+    {diff && (
+      <Dialog open={showMergeDialog} onOpenChange={setShowMergeDialog}>
+        <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-hidden p-0">
+          <MergeView
+            leftLines={diff.left}
+            rightLines={diff.right}
+            leftTitle="Text A"
+            rightTitle="Text B"
+            onClose={() => setShowMergeDialog(false)}
+          />
+        </DialogContent>
+      </Dialog>
+    )}
+    </>
   );
 }
