@@ -1,6 +1,9 @@
-import { DiffLine, DiffSegment, DiffResult, computeDiff } from './diffAlgorithm';
+import { DiffLine, DiffSegment, DiffResult, computeDiff, clearSimilarityCache } from './diffAlgorithm';
 
 export interface DiffOptions {
+  // Performance options
+  advancedMode?: boolean; // Enable character/word-level diffs and structural analysis
+  
   // Comparison options
   semanticComparison?: boolean; // Treat "1" and 1 as equal
   ignoreCase?: boolean;
@@ -77,11 +80,22 @@ function shouldIgnorePath(path: string, ignorePaths?: string[]): boolean {
   });
 }
 
+// Cache for deep equality checks
+const deepEqualCache = new Map<string, boolean>();
+
 // Deep equality check with options
 function deepEqual(a: any, b: any, options: DiffOptions, path: string = ''): boolean {
   // Check if path should be ignored
   if (shouldIgnorePath(path, options.ignorePaths)) {
     return true; // Treat ignored paths as equal
+  }
+  
+  // Create cache key for primitive values
+  if (typeof a !== 'object' || typeof b !== 'object') {
+    const cacheKey = `${path}:${JSON.stringify(a)}:${JSON.stringify(b)}`;
+    if (deepEqualCache.has(cacheKey)) {
+      return deepEqualCache.get(cacheKey)!;
+    }
   }
   
   // Normalize values
@@ -364,6 +378,35 @@ export function computeEnhancedDiff(
   rightText: string,
   options: DiffOptions = {}
 ): EnhancedDiffResult {
+  // Clear similarity cache for new comparison
+  clearSimilarityCache();
+  
+  // Early exit for identical content
+  if (leftText === rightText) {
+    const lines = leftText.split('\n');
+    const unchangedLines: DiffLine[] = lines.map((line, i) => ({
+      content: line,
+      type: 'unchanged',
+      lineNumber: i + 1
+    }));
+    return {
+      left: unchangedLines,
+      right: [...unchangedLines],
+      additions: 0,
+      removals: 0,
+      hasDifferences: false,
+      structuralChanges: [],
+      movedProperties: new Map(),
+      statistics: {
+        totalKeys: 0,
+        changedKeys: 0,
+        addedKeys: 0,
+        removedKeys: 0,
+        percentageChanged: 0
+      }
+    };
+  }
+  
   // Parse JSON if possible
   let leftObj: any;
   let rightObj: any;
@@ -379,8 +422,10 @@ export function computeEnhancedDiff(
     rightObj = rightText;
   }
   
-  // Detect structural changes if JSON
-  const structuralChanges = isJson ? detectStructuralChanges(leftObj, rightObj, options) : [];
+  // Skip structural change detection for very large objects or when advanced mode is disabled
+  const structuralChanges = isJson && options.advancedMode !== false && JSON.stringify(leftObj).length < 100000 
+    ? detectStructuralChanges(leftObj, rightObj, options) 
+    : [];
   const movedProperties = new Map<string, string>();
   
   structuralChanges
@@ -389,8 +434,8 @@ export function computeEnhancedDiff(
       movedProperties.set(change.from as string, change.to as string);
     });
   
-  // Compute statistics if JSON
-  const statistics = isJson ? computeDiffStatistics(leftObj, rightObj, options) : {
+  // Compute statistics if JSON and advanced mode is enabled
+  const statistics = isJson && options.advancedMode !== false ? computeDiffStatistics(leftObj, rightObj, options) : {
     totalKeys: 0,
     changedKeys: 0,
     addedKeys: 0,
@@ -403,7 +448,7 @@ export function computeEnhancedDiff(
   const rightFormatted = isJson ? JSON.stringify(rightObj, null, 2) : rightText;
   
   // Use existing diff algorithm for line-by-line comparison
-  const basicDiff = computeDiff(leftFormatted, rightFormatted);
+  const basicDiff = computeDiff(leftFormatted, rightFormatted, { advancedMode: options.advancedMode });
   
   return {
     ...basicDiff,

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Settings2, Eye, Filter, GitBranch, Search, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Settings2, Eye, Filter, GitBranch, Search, X, Info, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Popover,
@@ -12,6 +12,12 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { DiffOptions } from '@/lib/enhancedDiffAlgorithm';
 import { cn } from '@/lib/utils';
 
@@ -20,17 +26,41 @@ interface DiffOptionsProps {
   onOptionsChange: (options: DiffOptions) => void;
   structuralChangesCount?: number;
   className?: string;
+  contentSize?: number; // Size in lines or characters
 }
 
 export function DiffOptionsPanel({ 
   options, 
   onOptionsChange, 
   structuralChangesCount = 0,
-  className 
+  className,
+  contentSize = 0
 }: DiffOptionsProps) {
   const [ignoreKeysInput, setIgnoreKeysInput] = useState('');
   const [ignorePathsInput, setIgnorePathsInput] = useState('');
   const [isOpen, setIsOpen] = useState(false);
+  const [advancedModeOverride, setAdvancedModeOverride] = useState(false);
+  
+  // Auto-disable advanced mode for large files
+  const isLargeFile = contentSize > 5000;
+  const defaultAdvancedMode = !isLargeFile;
+  
+  // Initialize advanced mode based on file size
+  useEffect(() => {
+    if (options.advancedMode === undefined) {
+      onOptionsChange({ ...options, advancedMode: defaultAdvancedMode });
+    } else if (isLargeFile && options.advancedMode && !advancedModeOverride) {
+      // Auto-disable for large files unless user has overridden
+      onOptionsChange({ ...options, advancedMode: false });
+    }
+  }, [contentSize]);
+  
+  const handleAdvancedModeChange = (checked: boolean) => {
+    onOptionsChange({ ...options, advancedMode: checked });
+    if (isLargeFile && checked) {
+      setAdvancedModeOverride(true);
+    }
+  };
 
   const handleAddIgnoreKey = () => {
     if (ignoreKeysInput.trim()) {
@@ -59,6 +89,7 @@ export function DiffOptionsPanel({
   };
 
   const activeOptionsCount = [
+    options.advancedMode,
     options.semanticComparison,
     options.ignoreCase,
     options.ignoreWhitespace,
@@ -98,8 +129,60 @@ export function DiffOptionsPanel({
 
           <Separator />
 
-          <ScrollArea className="h-[400px] pr-4">
+          <ScrollArea className="h-[450px] pr-4">
             <div className="space-y-4">
+              {/* Advanced Mode Toggle */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border">
+                  <div className="flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-primary" />
+                    <div className="space-y-0.5">
+                      <Label htmlFor="advancedMode" className="text-sm font-medium cursor-pointer">
+                        Advanced Mode
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        {isLargeFile ? 
+                          <span className="text-amber-600">Auto-disabled for large files (&gt;5000 lines)</span> :
+                          'Character & word-level diffs, structural analysis'
+                        }
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent side="left" className="max-w-[300px]">
+                          <div className="space-y-2 text-sm">
+                            <p className="font-medium">Advanced Mode Features:</p>
+                            <ul className="list-disc list-inside space-y-1 text-xs">
+                              <li>Character-level diff highlighting</li>
+                              <li>Word-by-word comparison</li>
+                              <li>Structural change detection</li>
+                              <li>Property move/rename tracking</li>
+                              <li>Similarity analysis</li>
+                            </ul>
+                            <p className="text-xs text-muted-foreground pt-2">
+                              ⚠️ May impact performance on large files. Automatically disabled for files &gt;5000 lines but can be manually enabled.
+                            </p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <Switch
+                      id="advancedMode"
+                      checked={options.advancedMode !== false}
+                      onCheckedChange={handleAdvancedModeChange}
+                      className={isLargeFile && options.advancedMode ? 'data-[state=checked]:bg-amber-600' : ''}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+              
               {/* Comparison Options */}
               <div className="space-y-3">
                 <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">

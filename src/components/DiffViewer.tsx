@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Copy, Minus, Plus, Globe, Server, Code2, Rows3, FoldVertical, GitBranch, TrendingUp } from 'lucide-react';
+import { Copy, Minus, Plus, Globe, Server, Code2, Rows3, FoldVertical, GitBranch, TrendingUp, GitMerge } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { ApiResponse } from '@/lib/requestExecutor';
@@ -20,6 +20,14 @@ import { FoldableJson } from './FoldableJson';
 import { DiffOptionsPanel, DiffSearchBar } from './DiffOptions';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { MergeView } from './MergeView';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface DiffViewerProps {
   original: ApiResponse;
@@ -229,12 +237,20 @@ function DiffPanel({
 }
 
 export function DiffViewer({ original, localhost }: DiffViewerProps) {
-  const [viewMode, setViewMode] = useState<'diff' | 'foldable'>('diff');
+  const [viewMode, setViewMode] = useState<'diff' | 'foldable' | 'merge'>('diff');
   const [diffOptions, setDiffOptions] = useState<DiffOptions>({});
   const [searchResults, setSearchResults] = useState<ReturnType<typeof searchInDiff>>([]);
   const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
   const [pathInput, setPathInput] = useState('');
   const [highlightedLine, setHighlightedLine] = useState<{ line: number; side: 'left' | 'right' } | null>(null);
+  const [showMergeDialog, setShowMergeDialog] = useState(false);
+  
+  // Calculate content size for advanced mode auto-detection
+  const contentSize = useMemo(() => {
+    const leftLines = original.body.split('\n').length;
+    const rightLines = localhost.body.split('\n').length;
+    return Math.max(leftLines, rightLines);
+  }, [original.body, localhost.body]);
   
   // Use enhanced diff when options are set, otherwise fall back to basic diff
   const bodyDiff = useMemo(() => {
@@ -249,18 +265,18 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                       (diffOptions.ignoreKeys && diffOptions.ignoreKeys.length > 0) ||
                       (diffOptions.ignorePaths && diffOptions.ignorePaths.length > 0);
     
-    if (hasOptions) {
+    if (hasOptions || diffOptions.advancedMode !== false) {
       return computeEnhancedDiff(leftFormatted, rightFormatted, diffOptions) as EnhancedDiffResult;
     } else {
-      return computeDiff(leftFormatted, rightFormatted);
+      return computeDiff(leftFormatted, rightFormatted, { advancedMode: diffOptions.advancedMode });
     }
   }, [original.body, localhost.body, diffOptions]);
 
   const headersDiff = useMemo(() => {
     const leftHeaders = formatHeaders(original.headers);
     const rightHeaders = formatHeaders(localhost.headers);
-    return computeDiff(leftHeaders, rightHeaders);
-  }, [original.headers, localhost.headers]);
+    return computeDiff(leftHeaders, rightHeaders, { advancedMode: diffOptions.advancedMode });
+  }, [original.headers, localhost.headers, diffOptions.advancedMode]);
   
   // Handle search
   const handleSearch = (query: string, options: { caseSensitive?: boolean; regex?: boolean }) => {
@@ -350,6 +366,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
   const statistics = (bodyDiff as EnhancedDiffResult)?.statistics;
 
   return (
+    <>
     <Card className="border-0 shadow-lg overflow-hidden">
       <CardHeader className="pb-0 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
         <div className="flex items-center justify-between">
@@ -402,6 +419,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                   options={diffOptions}
                   onOptionsChange={setDiffOptions}
                   structuralChangesCount={structuralChangesCount}
+                  contentSize={contentSize}
                 />
                 <DiffSearchBar onSearch={handleSearch} />
                 
@@ -439,28 +457,41 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                 </Popover>
               </div>
             </div>
-            {isJsonResponse && (
-              <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/50">
+            <div className="flex items-center gap-2">
+              {isJsonResponse && (
+                <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/50">
+                  <Button
+                    variant={viewMode === 'diff' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    onClick={() => setViewMode('diff')}
+                    className="h-7 px-2 gap-1"
+                  >
+                    <Rows3 className="h-3.5 w-3.5" />
+                    <span className="text-xs">Diff</span>
+                  </Button>
+                  <Button
+                    variant={viewMode === 'foldable' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    onClick={() => setViewMode('foldable')}
+                    className="h-7 px-2 gap-1"
+                  >
+                    <FoldVertical className="h-3.5 w-3.5" />
+                    <span className="text-xs">Foldable</span>
+                  </Button>
+                </div>
+              )}
+              {bodyDiff.hasDifferences && (
                 <Button
-                  variant={viewMode === 'diff' ? 'secondary' : 'ghost'}
+                  variant="default"
                   size="sm"
-                  onClick={() => setViewMode('diff')}
-                  className="h-7 px-2 gap-1"
+                  onClick={() => setShowMergeDialog(true)}
+                  className="gap-2"
                 >
-                  <Rows3 className="h-3.5 w-3.5" />
-                  <span className="text-xs">Diff</span>
+                  <GitMerge className="h-4 w-4" />
+                  <span className="hidden sm:inline">Merge</span>
                 </Button>
-                <Button
-                  variant={viewMode === 'foldable' ? 'secondary' : 'ghost'}
-                  size="sm"
-                  onClick={() => setViewMode('foldable')}
-                  className="h-7 px-2 gap-1"
-                >
-                  <FoldVertical className="h-3.5 w-3.5" />
-                  <span className="text-xs">Foldable</span>
-                </Button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
           
           <TabsContent value="body" className="m-0 border-t mt-4">
@@ -548,5 +579,19 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
         </Tabs>
       </CardContent>
     </Card>
+
+    {/* Merge Dialog */}
+    <Dialog open={showMergeDialog} onOpenChange={setShowMergeDialog}>
+      <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-hidden p-0">
+        <MergeView
+          leftLines={bodyDiff.left}
+          rightLines={bodyDiff.right}
+          leftTitle="Original Domain"
+          rightTitle="Localhost"
+          onClose={() => setShowMergeDialog(false)}
+        />
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
