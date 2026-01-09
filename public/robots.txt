@@ -23,5 +23,10 @@ Allow: /
 User-agent: *
 Allow: /
 
-# Sitemap location (if you have one)
-# Sitemap: https://yourdomain.com/sitemap.xml
+# Sitemap location
+Sitemap: https://diffchecker.example/sitemap.xml
+
+# Additional directives
+Disallow: /api/
+Disallow: /*.json$
+Crawl-delay: 1

@@ -8,6 +8,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { AppTabs, AppMode } from '@/components/AppTabs';
 import { TextDiffChecker } from '@/components/TextDiffChecker';
 import { AdBanner } from '@/components/AdBanner';
+import { FeaturesSection, UsageGuideSection, FAQSection, BestPracticesSection, UseCasesSection } from '@/components/ContentSections';
 import { parseCurl } from '@/lib/curlParser';
 import { executeComparison, ComparisonResult } from '@/lib/requestExecutor';
 import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
@@ -90,11 +91,11 @@ const Index = () => {
         </div>
       </header>
 
-      {/* Main Content with Right Sidebar */}
-      <div className="flex-1 flex justify-center">
-        <div className="flex gap-4 px-3 py-6 w-full max-w-[1600px]">
-          {/* Main Content */}
-          <main className="flex-1 space-y-8 min-w-0">
+      {/* Main Content */}
+      <div className="flex-1">
+        <main className="space-y-0">
+          {/* Tool Section */}
+          <div className="px-3 py-6 max-w-6xl mx-auto space-y-8">
             {mode === 'curl-diff' ? <>
                 {/* Input Section */}
                 <CurlInput onSubmit={handleCompare} isLoading={isLoading} />
@@ -139,53 +140,107 @@ const Index = () => {
                     </div>
                   </div>}
               </> : <TextDiffChecker />}
-          </main>
+          </div>
 
-          {/* Right Sidebar - Ads */}
-          <aside className="w-36 flex-shrink-0 hidden xl:block">
-            <div className="sticky top-24 space-y-3">
-              <AdBanner adSlot="1234567890" format="rectangle" className="w-full" />
-              <AdBanner adSlot="9876543210" format="auto" className="w-full" />
-              <AdBanner adSlot="5555555555" format="rectangle" className="w-full" />
+          {/* Features Section */}
+          <FeaturesSection />
+          
+          {/* Ad Banner */}
+          <div className="w-full px-4 py-6 bg-muted/30">
+            <div className="max-w-4xl mx-auto">
+              <AdBanner adSlot="1234567890" format="horizontal" />
             </div>
-          </aside>
-        </div>
+          </div>
+
+          {/* Usage Guide Section */}
+          <UsageGuideSection />
+          
+          {/* Use Cases Section */}
+          <UseCasesSection />
+          
+          {/* Ad Banner */}
+          <div className="w-full px-4 py-6">
+            <div className="max-w-4xl mx-auto">
+              <AdBanner adSlot="9876543210" format="horizontal" />
+            </div>
+          </div>
+
+          {/* Best Practices Section */}
+          <BestPracticesSection />
+          
+          {/* FAQ Section */}
+          <FAQSection />
+          
+          {/* Bottom Ad Banner */}
+          <div className="w-full px-4 py-6 bg-muted/30">
+            <div className="max-w-4xl mx-auto">
+              <AdBanner adSlot="5555555555" format="horizontal" />
+            </div>
+          </div>
+        </main>
       </div>
 
-      {/* Bottom Ad Banner */}
-      <div className="w-full px-4 py-6 bg-background border-t">
-        <div className="max-w-6xl mx-auto">
-          <AdBanner adSlot="5555555555" format="horizontal" />
-        </div>
-      </div>
 
       {/* Footer */}
       <footer className="border-t bg-card/50">
-        <div className="max-w-6xl mx-auto px-4 py-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <p className="text-sm text-muted-foreground">
-              Created with ❤️ by <span className="font-semibold text-foreground">Virtualis World</span>
-            </p>
-            <div className="flex items-center gap-3">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => window.open(GITHUB_ISSUES_URL, '_blank')}
-                className="text-muted-foreground hover:text-foreground gap-1.5"
-              >
-                <Bug className="h-4 w-4" />
-                <span>Report Issue</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => window.open(GITHUB_REPO_URL, '_blank')}
-                className="text-muted-foreground hover:text-foreground gap-1.5"
-              >
-                <Github className="h-4 w-4" />
-                <span>Source Code</span>
-              </Button>
+        <div className="max-w-6xl mx-auto px-4 py-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <div>
+              <h3 className="font-semibold text-sm mb-3">About DiffChecker</h3>
+              <p className="text-sm text-muted-foreground">
+                A privacy-first, browser-based tool for comparing API responses and text content. 
+                All processing happens locally in your browser.
+              </p>
             </div>
+            <div>
+              <h3 className="font-semibold text-sm mb-3">Resources</h3>
+              <div className="flex flex-col gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => window.open(GITHUB_REPO_URL, '_blank')}
+                  className="text-muted-foreground hover:text-foreground justify-start px-0"
+                >
+                  <Github className="h-4 w-4 mr-2" />
+                  Source Code
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => window.open(GITHUB_ISSUES_URL, '_blank')}
+                  className="text-muted-foreground hover:text-foreground justify-start px-0"
+                >
+                  <Bug className="h-4 w-4 mr-2" />
+                  Report Issue
+                </Button>
+              </div>
+            </div>
+            <div>
+              <h3 className="font-semibold text-sm mb-3">Legal</h3>
+              <div className="flex flex-col gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => window.location.href = '/privacy'}
+                  className="text-muted-foreground hover:text-foreground justify-start px-0"
+                >
+                  Privacy Policy
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => window.location.href = '/terms'}
+                  className="text-muted-foreground hover:text-foreground justify-start px-0"
+                >
+                  Terms of Service
+                </Button>
+              </div>
+            </div>
+          </div>
+          <div className="border-t pt-6">
+            <p className="text-sm text-muted-foreground text-center">
+              © 2024 Virtualis World. Created with ❤️ for developers worldwide.
+            </p>
           </div>
         </div>
       </footer>
