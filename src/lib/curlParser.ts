@@ -75,16 +75,3 @@ export function parseCurl(curlCommand: string): ParsedCurl {
     originalDomain,
   };
 }
-
-export function replaceUrlDomain(url: string, newDomain: string): string {
-  try {
-    const urlObj = new URL(url);
-    const newDomainUrl = new URL(newDomain);
-    urlObj.protocol = newDomainUrl.protocol;
-    urlObj.host = newDomainUrl.host;
-    urlObj.port = newDomainUrl.port;
-    return urlObj.toString();
-  } catch {
-    return url;
-  }
-}
