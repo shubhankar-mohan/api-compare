@@ -6,12 +6,15 @@ DiffChecker is a powerful offline comparison tool that helps developers compare 
 
 ### Key Features
 
-- **API Response Comparison**: Compare API responses between production and localhost environments using cURL commands
+- **API Response Comparison**: Compare API responses between any two environment using cURL commands
 - **Text Diff Checker**: Compare any two text inputs with visual diff highlighting
+- **File Upload Support**: Upload and compare text files directly (.txt, .json, .js, .ts, .html, .css, .md, .xml, .csv, .log)
+- **Find & Replace**: Powerful character/string replacement tool with escape sequence support (\n, \t, \r, etc.) and options to replace in Text A, Text B, or both
 - **Privacy-First**: All processing happens offline in your browser
 - **Visual Diff Viewer**: Side-by-side comparison with highlighted differences
 - **cURL Support**: Supports GET, POST, PUT, PATCH methods with headers and request bodies
 - **JSON Formatting**: Automatically formats and beautifies JSON responses
+- **Export Results**: Save comparison results as JSON files for documentation
 - **Dark/Light Mode**: Toggle between themes for comfortable viewing
 
 ## Use Cases
