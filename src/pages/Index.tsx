@@ -35,10 +35,12 @@ const Index = () => {
     setResult(null);
     try {
       const parsed = parseCurl(curlCommand);
-      if (!parsed.url) {
+      const parsed2 = parseCurl(localhostUrl);
+      // console.log(parsed.url +" " + parsed2.url)
+      if (!parsed.url || !parsed2.url) {
         toast({
-          title: 'Invalid cURL',
-          description: 'Could not extract URL from the cURL command',
+          title: 'Invalid cURL command - A or B or both',
+          description: '',
           variant: 'destructive'
         });
         return;
@@ -47,7 +49,7 @@ const Index = () => {
         title: 'Executing requests...',
         description: `Comparing ${parsed.method} requests`
       });
-      const comparisonResult = await executeComparison(parsed, localhostUrl);
+      const comparisonResult = await executeComparison(parsed, parsed2);
       setResult(comparisonResult);
       const hasDiff = comparisonResult.original.body !== comparisonResult.localhost.body || comparisonResult.original.status !== comparisonResult.localhost.status;
       toast({

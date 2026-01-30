@@ -112,15 +112,12 @@ export interface ComparisonResult {
 
 export async function executeComparison(
   parsed: ParsedCurl,
-  localhostUrl: string
+  parsed2: ParsedCurl
 ): Promise<ComparisonResult> {
-  const localUrl = replaceUrlDomain(parsed.url, localhostUrl);
-
   const [originalResult, localhostResult] = await Promise.allSettled([
     executeRequest(parsed.url, parsed),
-    executeRequest(localUrl, parsed),
+    executeRequest(parsed2.url, parsed2),
   ]);
-
   const original: ApiResponse = originalResult.status === 'fulfilled'
     ? originalResult.value
     : {
@@ -144,7 +141,7 @@ export async function executeComparison(
         size: 0,
         success: false,
         error: localhostResult.reason?.message || 'Request failed',
-        url: localUrl,
+        url: parsed2.url,
       };
 
   return { original, localhost };
