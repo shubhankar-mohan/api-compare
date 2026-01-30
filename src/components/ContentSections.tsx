@@ -170,7 +170,7 @@ export function UsageGuideSection() {
               API Comparison Guide
             </CardTitle>
             <CardDescription>
-              Compare API responses between production and localhost environments
+              Compare API responses between any two environments
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

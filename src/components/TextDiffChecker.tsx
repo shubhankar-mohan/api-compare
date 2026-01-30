@@ -6,10 +6,10 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
-import { 
+import {
   ArrowRightLeft, FileText, Copy, Trash2, Minus, Plus, Globe, Server,
   Wand2, CaseLower, SortAsc, WrapText, Scissors, RotateCcw, Settings,
-  ChevronLeft, ChevronRight, GitMerge
+  ChevronLeft, ChevronRight, GitMerge, Upload, Download, Search, Replace
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { computeDiff, formatJson, DiffLine, DiffSegment } from '@/lib/diffAlgorithm';
@@ -19,6 +19,9 @@ import { MergeView } from './MergeView';
 import {
   Dialog,
   DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
 } from '@/components/ui/dialog';
 
 function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'left' | 'right' }) {
@@ -261,6 +264,8 @@ function ToolButton({ icon: Icon, label, onClick, disabled }: ToolButtonProps) {
 export function TextDiffChecker() {
   const [leftText, setLeftText] = useState('');
   const [rightText, setRightText] = useState('');
+  const [leftFileName, setLeftFileName] = useState<string>('');
+  const [rightFileName, setRightFileName] = useState<string>('');
   const [hasCompared, setHasCompared] = useState(false);
   const [realTimeDiff, setRealTimeDiff] = useState(false);
   const [showMobileTools, setShowMobileTools] = useState(false);
@@ -268,6 +273,10 @@ export function TextDiffChecker() {
   const [mergedText, setMergedText] = useState('');
   const [acceptedChanges, setAcceptedChanges] = useState<Set<string>>(new Set());
   const [showMergeDialog, setShowMergeDialog] = useState(false);
+  const [showFindReplaceDialog, setShowFindReplaceDialog] = useState(false);
+  const [findText, setFindText] = useState('');
+  const [replaceText, setReplaceText] = useState('');
+  const [replaceTarget, setReplaceTarget] = useState<'left' | 'right' | 'both'>('both');
 
   const isJson = useMemo(() => {
     try {
@@ -311,6 +320,8 @@ export function TextDiffChecker() {
   const handleClear = () => {
     setLeftText('');
     setRightText('');
+    setLeftFileName('');
+    setRightFileName('');
     setHasCompared(false);
     setMergeMode(false);
     setMergedText('');
@@ -430,6 +441,139 @@ export function TextDiffChecker() {
     });
   };
 
+  const handleFileUpload = (side: 'left' | 'right') => (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (side === 'left') {
+        setLeftText(content);
+        setLeftFileName(file.name);
+      } else {
+        setRightText(content);
+        setRightFileName(file.name);
+      }
+      if (!realTimeDiff) setHasCompared(false);
+      toast({
+        title: 'File loaded!',
+        description: `${file.name} has been loaded successfully`,
+      });
+    };
+    reader.onerror = () => {
+      toast({
+        title: 'Error loading file',
+        description: 'Failed to read the selected file',
+        variant: 'destructive'
+      });
+    };
+    reader.readAsText(file);
+  };
+
+  const handleSaveResults = () => {
+    if (!diff) return;
+
+    const results = {
+      comparison: {
+        hasDifferences: diff.hasDifferences,
+        additions: diff.additions,
+        removals: diff.removals,
+        leftFile: leftFileName || 'Text A',
+        rightFile: rightFileName || 'Text B',
+        timestamp: new Date().toISOString()
+      },
+      leftContent: leftText,
+      rightContent: rightText,
+      ...(mergeMode && mergedText && { mergedContent: mergedText })
+    };
+
+    const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `diff-comparison-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toast({
+      title: 'Results saved!',
+      description: 'Comparison results have been downloaded as a JSON file',
+    });
+  };
+
+  // Helper function to convert escape sequences to actual characters
+  const unescapeString = (str: string): string => {
+    return str
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t')
+      .replace(/\\b/g, '\b')
+      .replace(/\\f/g, '\f')
+      .replace(/\\v/g, '\v')
+      .replace(/\\0/g, '\0')
+      .replace(/\\\\/g, '\\'); // Handle escaped backslashes
+  };
+
+  const handleFindReplace = () => {
+    if (!findText) {
+      toast({
+        title: 'Find text required',
+        description: 'Please enter text to find',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    // Convert escape sequences to actual characters
+    const findPattern = unescapeString(findText);
+    const replaceWith = unescapeString(replaceText);
+
+    let replacements = 0;
+
+    if (replaceTarget === 'left' || replaceTarget === 'both') {
+      if (leftText.includes(findPattern)) {
+        const newText = leftText.replaceAll(findPattern, replaceWith);
+        setLeftText(newText);
+        // Count occurrences of the actual pattern
+        const escapedPattern = findPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        replacements += (leftText.match(new RegExp(escapedPattern, 'g')) || []).length;
+      }
+    }
+
+    if (replaceTarget === 'right' || replaceTarget === 'both') {
+      if (rightText.includes(findPattern)) {
+        const newText = rightText.replaceAll(findPattern, replaceWith);
+        setRightText(newText);
+        // Count occurrences of the actual pattern
+        const escapedPattern = findPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        replacements += (rightText.match(new RegExp(escapedPattern, 'g')) || []).length;
+      }
+    }
+
+    if (!realTimeDiff) setHasCompared(false);
+
+    // Reset dialog state
+    setFindText('');
+    setReplaceText('');
+    setShowFindReplaceDialog(false);
+
+    if (replacements > 0) {
+      toast({
+        title: 'Find & Replace completed!',
+        description: `Replaced ${replacements} occurrence${replacements === 1 ? '' : 's'}`,
+      });
+    } else {
+      toast({
+        title: 'No matches found',
+        description: 'The find text was not found in the selected content',
+        variant: 'destructive'
+      });
+    }
+  };
+
   return (
     <>
     <div className="flex gap-3 relative">
@@ -476,6 +620,12 @@ export function TextDiffChecker() {
                   icon={Scissors}
                   label="Trim whitespace"
                   onClick={() => applyTool('trim')}
+                  disabled={!leftText.trim() && !rightText.trim()}
+                />
+                <ToolButton
+                  icon={Replace}
+                  label="Find & Replace"
+                  onClick={() => setShowFindReplaceDialog(true)}
                   disabled={!leftText.trim() && !rightText.trim()}
                 />
               </div>
@@ -546,6 +696,12 @@ export function TextDiffChecker() {
                     disabled={!leftText.trim() && !rightText.trim()}
                   />
                   <ToolButton
+                    icon={Replace}
+                    label="Find & Replace"
+                    onClick={() => { setShowFindReplaceDialog(true); setShowMobileTools(false); }}
+                    disabled={!leftText.trim() && !rightText.trim()}
+                  />
+                  <ToolButton
                     icon={RotateCcw}
                     label="Clear all"
                     onClick={() => { handleClear(); setShowMobileTools(false); }}
@@ -574,7 +730,15 @@ export function TextDiffChecker() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-sm font-semibold">Text A</Label>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm font-semibold">Text A</Label>
+                    {leftFileName && (
+                      <Badge variant="outline" className="text-xs">
+                        <FileText className="h-3 w-3 mr-1" />
+                        {leftFileName}
+                      </Badge>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1">
                     <Button
                       type="button"
@@ -588,6 +752,24 @@ export function TextDiffChecker() {
                       <Wand2 className="h-3.5 w-3.5" />
                       <span className="text-xs">Format</span>
                     </Button>
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept=".txt,.json,.js,.ts,.html,.css,.md,.xml,.csv,.log"
+                        onChange={handleFileUpload('left')}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        title="Upload file"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-muted-foreground hover:text-primary"
+                        title="Upload file"
+                      >
+                        <Upload className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                     <Button
                       type="button"
                       variant="ghost"
@@ -606,7 +788,10 @@ export function TextDiffChecker() {
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setLeftText('')}
+                      onClick={() => {
+                        setLeftText('');
+                        setLeftFileName('');
+                      }}
                       disabled={!leftText.trim()}
                       className="h-7 px-2 text-muted-foreground hover:text-destructive"
                     >
@@ -617,13 +802,25 @@ export function TextDiffChecker() {
                 <Textarea
                   placeholder="Paste original text or JSON here..."
                   value={leftText}
-                  onChange={(e) => { setLeftText(e.target.value); if (!realTimeDiff) setHasCompared(false); }}
+                  onChange={(e) => {
+                    setLeftText(e.target.value);
+                    if (!realTimeDiff) setHasCompared(false);
+                    if (!e.target.value.trim()) setLeftFileName('');
+                  }}
                   className="font-mono text-sm min-h-[200px] resize-y bg-muted/50 border-2 focus:border-primary/50 transition-colors"
                 />
               </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-sm font-semibold">Text B</Label>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm font-semibold">Text B</Label>
+                    {rightFileName && (
+                      <Badge variant="outline" className="text-xs">
+                        <FileText className="h-3 w-3 mr-1" />
+                        {rightFileName}
+                      </Badge>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1">
                     <Button
                       type="button"
@@ -637,6 +834,24 @@ export function TextDiffChecker() {
                       <Wand2 className="h-3.5 w-3.5" />
                       <span className="text-xs">Format</span>
                     </Button>
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept=".txt,.json,.js,.ts,.html,.css,.md,.xml,.csv,.log"
+                        onChange={handleFileUpload('right')}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        title="Upload file"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-muted-foreground hover:text-accent"
+                        title="Upload file"
+                      >
+                        <Upload className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                     <Button
                       type="button"
                       variant="ghost"
@@ -655,7 +870,10 @@ export function TextDiffChecker() {
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setRightText('')}
+                      onClick={() => {
+                        setRightText('');
+                        setRightFileName('');
+                      }}
                       disabled={!rightText.trim()}
                       className="h-7 px-2 text-muted-foreground hover:text-destructive"
                     >
@@ -666,7 +884,11 @@ export function TextDiffChecker() {
                 <Textarea
                   placeholder="Paste modified text or JSON here..."
                   value={rightText}
-                  onChange={(e) => { setRightText(e.target.value); if (!realTimeDiff) setHasCompared(false); }}
+                  onChange={(e) => {
+                    setRightText(e.target.value);
+                    if (!realTimeDiff) setHasCompared(false);
+                    if (!e.target.value.trim()) setRightFileName('');
+                  }}
                   className="font-mono text-sm min-h-[200px] resize-y bg-muted/50 border-2 focus:border-accent/50 transition-colors"
                 />
               </div>
@@ -723,6 +945,15 @@ export function TextDiffChecker() {
                   )}
                 </CardTitle>
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSaveResults}
+                    className="gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Save Results</span>
+                  </Button>
                   {diff.hasDifferences && (
                     <Button
                       variant="default"
@@ -849,6 +1080,101 @@ export function TextDiffChecker() {
         </DialogContent>
       </Dialog>
     )}
+
+    {/* Find & Replace Dialog */}
+    <Dialog open={showFindReplaceDialog} onOpenChange={setShowFindReplaceDialog}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Replace className="h-5 w-5" />
+            Find & Replace
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="find-text">Find</Label>
+            <input
+              id="find-text"
+              type="text"
+              value={findText}
+              onChange={(e) => setFindText(e.target.value)}
+              placeholder="Enter text to find..."
+              className="w-full px-3 py-2 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+            />
+            <p className="text-xs text-muted-foreground">
+              Use \n for newline, \t for tab, \r for carriage return
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="replace-text">Replace with</Label>
+            <input
+              id="replace-text"
+              type="text"
+              value={replaceText}
+              onChange={(e) => setReplaceText(e.target.value)}
+              placeholder="Enter replacement text..."
+              className="w-full px-3 py-2 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+            />
+            <p className="text-xs text-muted-foreground">
+              Use \n for newline, \t for tab, etc.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>Apply to</Label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setReplaceTarget('left')}
+                className={`px-3 py-1 text-xs rounded-md border transition-colors ${
+                  replaceTarget === 'left'
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background border-input hover:bg-accent'
+                }`}
+              >
+                Text A only
+              </button>
+              <button
+                type="button"
+                onClick={() => setReplaceTarget('right')}
+                className={`px-3 py-1 text-xs rounded-md border transition-colors ${
+                  replaceTarget === 'right'
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background border-input hover:bg-accent'
+                }`}
+              >
+                Text B only
+              </button>
+              <button
+                type="button"
+                onClick={() => setReplaceTarget('both')}
+                className={`px-3 py-1 text-xs rounded-md border transition-colors ${
+                  replaceTarget === 'both'
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background border-input hover:bg-accent'
+                }`}
+              >
+                Both texts
+              </button>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setShowFindReplaceDialog(false);
+              setFindText('');
+              setReplaceText('');
+            }}
+          >
+            Cancel
+          </Button>
+          <Button onClick={handleFindReplace}>
+            Replace All
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }
