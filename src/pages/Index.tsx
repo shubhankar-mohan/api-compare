@@ -30,17 +30,65 @@ const Index = () => {
   }, [mode]);
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ComparisonResult | null>(null);
-  const handleCompare = async (curlCommand: string, localhostUrl: string) => {
+  const handleCompare = async (curlCommand: string, secondInput: string) => {
     setIsLoading(true);
     setResult(null);
     try {
       const parsed = parseCurl(curlCommand);
-      const parsed2 = parseCurl(localhostUrl);
-      // console.log(parsed.url +" " + parsed2.url)
+      
+      // Check if secondInput is a cURL command or a base URL
+      let parsed2;
+      if (secondInput.toLowerCase().includes('curl') || secondInput.toLowerCase().startsWith('http')) {
+        // If it contains 'curl', parse it as a cURL command
+        if (secondInput.toLowerCase().includes('curl')) {
+          parsed2 = parseCurl(secondInput);
+        } else {
+          // It's a base URL, so we need to construct the localhost version of the production URL
+          if (!parsed.url) {
+            toast({
+              title: 'Invalid production cURL command',
+              description: 'Please provide a valid cURL command',
+              variant: 'destructive'
+            });
+            return;
+          }
+          
+          try {
+            const prodUrl = new URL(parsed.url);
+            const baseUrl = secondInput.endsWith('/') ? secondInput.slice(0, -1) : secondInput;
+            const localhostUrl = `${baseUrl}${prodUrl.pathname}${prodUrl.search}`;
+            
+            // Create a cURL-like command for the localhost URL with the same headers and body
+            let curlCmd = `curl '${localhostUrl}'`;
+            if (parsed.method !== 'GET') {
+              curlCmd += ` -X ${parsed.method}`;
+            }
+            for (const [key, value] of Object.entries(parsed.headers)) {
+              curlCmd += ` -H '${key}: ${value}'`;
+            }
+            if (parsed.body) {
+              curlCmd += ` -d '${parsed.body}'`;
+            }
+            
+            parsed2 = parseCurl(curlCmd);
+          } catch (error) {
+            toast({
+              title: 'Error constructing localhost URL',
+              description: 'Failed to create localhost URL from production command',
+              variant: 'destructive'
+            });
+            return;
+          }
+        }
+      } else {
+        // Assume it's a cURL command
+        parsed2 = parseCurl(secondInput);
+      }
+      
       if (!parsed.url || !parsed2.url) {
         toast({
-          title: 'Invalid cURL command - A or B or both',
-          description: '',
+          title: 'Invalid input',
+          description: 'Please provide valid cURL commands or URLs',
           variant: 'destructive'
         });
         return;
