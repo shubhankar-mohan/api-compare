@@ -12,7 +12,8 @@ import {
   ChevronLeft, ChevronRight, GitMerge, Upload, Download, Search, Replace
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import { computeDiff, formatJson, DiffLine, DiffSegment } from '@/lib/diffAlgorithm';
+import { computeDiff, formatJson, DiffLine, DiffSegment, ComparisonConfig } from '@/lib/diffAlgorithm';
+import { computeStructuralDiff } from '@/lib/structuralDiff';
 import { cn } from '@/lib/utils';
 import { JsonSyntaxHighlight } from './JsonSyntaxHighlight';
 import { MergeView } from './MergeView';
@@ -36,7 +37,7 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
           return (
             <span 
               key={idx} 
-              className="bg-[hsl(var(--diff-removed))/0.3] text-[hsl(var(--diff-removed))] rounded-sm"
+              className="bg-red-200 dark:bg-red-900/40 text-red-800 dark:text-red-200"
             >
               {seg.text}
             </span>
@@ -46,7 +47,7 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
           return (
             <span 
               key={idx} 
-              className="bg-[hsl(var(--diff-added))/0.3] text-[hsl(var(--diff-added))] rounded-sm"
+              className="bg-green-200 dark:bg-green-900/40 text-green-800 dark:text-green-200"
             >
               {seg.text}
             </span>
@@ -78,7 +79,7 @@ function DiffLineComponent({
   const bgClass = {
     added: 'bg-[hsl(var(--diff-added-bg))]',
     removed: 'bg-[hsl(var(--diff-removed-bg))]',
-    modified: 'bg-yellow-50 dark:bg-yellow-900/10',  // Yellow/amber background for modified lines
+    modified: 'bg-yellow-100 dark:bg-yellow-900/20',  // More visible yellow background for modified lines
     unchanged: '',
     empty: 'bg-muted/30',
   }[line.type];
@@ -295,8 +296,33 @@ export function TextDiffChecker() {
     if (!shouldShowDiff) return null;
     const left = isJson ? formatJson(leftText) : leftText;
     const right = isJson ? formatJson(rightText) : rightText;
-    return computeDiff(left, right);
-  }, [leftText, rightText, shouldShowDiff, isJson]);
+    
+    // Detect file type and apply appropriate config
+    let formatType: 'json' | 'yaml' | 'text' = 'text';
+    if (isJson) {
+      formatType = 'json';
+    } else if (leftFileName?.endsWith('.yml') || leftFileName?.endsWith('.yaml') || 
+               rightFileName?.endsWith('.yml') || rightFileName?.endsWith('.yaml') ||
+               leftText.includes('services:') || leftText.includes('version:')) {
+      formatType = 'yaml';
+    }
+    
+    const config: ComparisonConfig = {
+      ignoreTrailingWhitespace: true,
+      ignoreLineEndings: true,
+      ignoreInvisibleCharacters: true,
+      normalizeIndentation: formatType === 'yaml',
+      tabSize: 2,
+      formatType: formatType as any
+    };
+    
+    // Use structural diff for YAML files to handle missing fields better
+    if (formatType === 'yaml') {
+      return computeStructuralDiff(left, right, config);
+    }
+    
+    return computeDiff(left, right, { advancedMode: true, config });
+  }, [leftText, rightText, shouldShowDiff, isJson, leftFileName, rightFileName]);
 
   const handleCompare = () => {
     if (!leftText.trim() && !rightText.trim()) {
@@ -306,7 +332,32 @@ export function TextDiffChecker() {
     setHasCompared(true);
     
     // Calculate the difference count based on the current diff
-    const currentDiff = computeDiff(leftText, rightText, { advancedMode: true });
+    const left = isJson ? formatJson(leftText) : leftText;
+    const right = isJson ? formatJson(rightText) : rightText;
+    
+    // Use same config as display diff
+    let formatType: 'json' | 'yaml' | 'text' = 'text';
+    if (isJson) {
+      formatType = 'json';
+    } else if (leftFileName?.endsWith('.yml') || leftFileName?.endsWith('.yaml') || 
+               rightFileName?.endsWith('.yml') || rightFileName?.endsWith('.yaml') ||
+               leftText.includes('services:') || leftText.includes('version:')) {
+      formatType = 'yaml';
+    }
+    
+    const config: ComparisonConfig = {
+      ignoreTrailingWhitespace: true,
+      ignoreLineEndings: true,
+      ignoreInvisibleCharacters: true,
+      normalizeIndentation: formatType === 'yaml',
+      tabSize: 2,
+      formatType: formatType as any
+    };
+    
+    // Use structural diff for YAML files to handle missing fields better
+    const currentDiff = formatType === 'yaml' 
+      ? computeStructuralDiff(left, right, config)
+      : computeDiff(left, right, { advancedMode: true, config });
     const diffCount = currentDiff.additions + currentDiff.removals;
     
     toast({ 
