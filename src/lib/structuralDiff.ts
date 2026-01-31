@@ -32,14 +32,22 @@ function parseStructuralLine(line: string, config?: ComparisonConfig): Structura
   // Check if it's empty
   const isEmpty = line.trim() === '';
   
-  // Parse key-value pairs (YAML style)
-  const keyValueMatch = normalized.match(/^(\s*)([a-zA-Z0-9_-]+)\s*:\s*(.*)$/);
+  // Parse key-value pairs (YAML style and environment variables)
   let key: string | undefined;
   let value: string | undefined;
   
+  // Check for YAML key-value pairs
+  const keyValueMatch = normalized.match(/^(\s*)([a-zA-Z0-9_-]+)\s*:\s*(.*)$/);
   if (keyValueMatch) {
     key = keyValueMatch[2];
     value = keyValueMatch[3];
+  }
+  
+  // Also check for environment variable format (- KEY=value or - KEY: value)
+  const envVarMatch = normalized.match(/^(\s*)-\s*([A-Z_][A-Z0-9_]*)[=:]\s*(.*)$/);
+  if (envVarMatch) {
+    key = envVarMatch[2];
+    value = envVarMatch[3];
   }
   
   return {
@@ -121,21 +129,24 @@ export function findStructuralMatches(
     
     const leftLine = leftStructured[i];
     
-    // Look for matching line within a reasonable window
-    const searchStart = Math.max(0, i - 10);
-    const searchEnd = Math.min(rightStructured.length, i + 10);
+    // Look for matching line within a wider window (to handle missing fields)
+    const searchStart = Math.max(0, i - 30);
+    const searchEnd = Math.min(rightStructured.length, i + 30);
     
     for (let j = searchStart; j < searchEnd; j++) {
       if (usedRight.has(j)) continue;
       
       const rightLine = rightStructured[j];
       
-      // Check if normalized content matches and indent is same
-      if (leftLine.normalized === rightLine.normalized &&
-          leftLine.indent === rightLine.indent) {
-        matches.set(i, j);
-        usedRight.add(j);
-        break;
+      // Check if normalized content matches (allow slight indent differences for YAML)
+      if (leftLine.normalized === rightLine.normalized) {
+        // Prioritize exact indent matches, but accept close indents
+        const indentDiff = Math.abs(leftLine.indent - rightLine.indent);
+        if (indentDiff <= 2) { // Allow up to 2 levels of indent difference
+          matches.set(i, j);
+          usedRight.add(j);
+          break;
+        }
       }
     }
   }
