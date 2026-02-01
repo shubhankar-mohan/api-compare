@@ -45,7 +45,7 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
           return (
             <span 
               key={idx} 
-              className="bg-red-500/30 text-red-600 dark:bg-red-500/20 dark:text-red-400 px-0.5 rounded-sm font-semibold"
+              className="bg-red-200 dark:bg-red-900/40 text-red-800 dark:text-red-200"
             >
               {seg.text}
             </span>
@@ -55,7 +55,7 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
           return (
             <span 
               key={idx} 
-              className="bg-green-500/30 text-green-600 dark:bg-green-500/20 dark:text-green-400 px-0.5 rounded-sm font-semibold"
+              className="bg-green-200 dark:bg-green-900/40 text-green-800 dark:text-green-200"
             >
               {seg.text}
             </span>

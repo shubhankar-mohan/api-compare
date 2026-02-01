@@ -1,3 +1,6 @@
+import { detectFieldType } from './smartComparison';
+import { computeStructuralDiff } from './structuralDiff';
+
 export type DiffLineType = 'added' | 'removed' | 'unchanged' | 'empty' | 'modified';
 
 export interface DiffSegment {
@@ -379,6 +382,19 @@ function normalizeLine(line: string, config?: ComparisonConfig): string {
 export function computeDiff(leftText: string, rightText: string, options?: { advancedMode?: boolean; config?: ComparisonConfig }): DiffResult {
   const config = options?.config || {};
   
+  // Check if this is JSON content
+  const isJson = isJsonContent(leftText) && isJsonContent(rightText);
+  
+  // For JSON content, use structural diff with smart field detection
+  if (isJson) {
+    return computeSmartJsonDiff(leftText, rightText, config);
+  }
+  
+  // For YAML/config files, use structural diff
+  if (config?.formatType === 'yaml' || config?.formatType === 'config') {
+    return computeStructuralDiff(leftText, rightText, config);
+  }
+  
   // Normalize texts for comparison
   const leftNormalized = normalizeLine(leftText, config);
   const rightNormalized = normalizeLine(rightText, config);
@@ -646,4 +662,65 @@ export function formatHeaders(headers: Record<string, string>): string {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}: ${value}`)
     .join('\n');
+}
+
+// Check if content is JSON
+function isJsonContent(text: string): boolean {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Smart JSON diff that understands field types
+function computeSmartJsonDiff(leftText: string, rightText: string, config?: ComparisonConfig): DiffResult {
+  try {
+    const leftJson = JSON.parse(leftText);
+    const rightJson = JSON.parse(rightText);
+    
+    // Format both JSONs
+    const leftFormatted = JSON.stringify(leftJson, null, 2);
+    const rightFormatted = JSON.stringify(rightJson, null, 2);
+    
+    // Preprocess to mark timestamp/ID fields
+    const leftProcessed = preprocessJsonForComparison(leftFormatted);
+    const rightProcessed = preprocessJsonForComparison(rightFormatted);
+    
+    // Use structural diff for better alignment
+    return computeStructuralDiff(leftProcessed, rightProcessed, config);
+  } catch {
+    // Fall back to text diff if JSON parsing fails
+    return computeStructuralDiff(leftText, rightText, config);
+  }
+}
+
+// Preprocess JSON to normalize timestamps and IDs
+function preprocessJsonForComparison(jsonText: string): string {
+  const lines = jsonText.split('\n');
+  return lines.map(line => {
+    // Check if line contains a field that looks like timestamp or ID
+    const fieldMatch = line.match(/^(\s*)"([^"]+)"\s*:\s*(.+)/);
+    if (fieldMatch) {
+      const [, indent, key, value] = fieldMatch;
+      const fieldType = detectFieldType(key, value);
+      
+      if (fieldType === 'timestamp') {
+        // Check if values are actually different timestamps
+        const timestampPattern = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}|\d{10,13}/;
+        if (timestampPattern.test(value)) {
+          // Mark timestamp fields to be treated specially
+          return `${indent}"${key}": ${value} /* TIMESTAMP */`;
+        }
+      } else if (fieldType === 'id') {
+        // Mark ID fields
+        const idPattern = /"[0-9a-f-]+"|"(usr_|sess_|prod_|req_)[^"]+"/;
+        if (idPattern.test(value)) {
+          return `${indent}"${key}": ${value} /* ID */`;
+        }
+      }
+    }
+    return line;
+  }).join('\n');
 }

@@ -67,6 +67,20 @@ function parseStructuralLine(line: string, config?: ComparisonConfig): Structura
 function normalizeLine(line: string, config?: ComparisonConfig): string {
   let normalized = line;
   
+  // Special handling for timestamp and ID markers
+  const hasTimestampMarker = line.includes('/* TIMESTAMP */');
+  const hasIdMarker = line.includes('/* ID */');
+  
+  if (hasTimestampMarker || hasIdMarker) {
+    // Extract the field name and type, ignore the value for comparison
+    const match = line.match(/^(\s*"[^"]+"\s*:).*(\/\* (TIMESTAMP|ID) \*\/)/);
+    if (match) {
+      // Normalize to just the field name and type for comparison
+      normalized = match[1] + ' <NORMALIZED_' + match[3] + '>';
+      return normalized;
+    }
+  }
+  
   // Remove all invisible characters and normalize whitespace
   normalized = normalized
     .replace(/[\u0000-\u001F]/g, '')
@@ -143,6 +157,23 @@ export function findStructuralMatches(
         // Prioritize exact indent matches, but accept close indents
         const indentDiff = Math.abs(leftLine.indent - rightLine.indent);
         if (indentDiff <= 2) { // Allow up to 2 levels of indent difference
+          matches.set(i, j);
+          usedRight.add(j);
+          break;
+        }
+      }
+      
+      // Also check if both lines are timestamps or IDs for the same field
+      const leftIsSpecial = leftLine.normalized.includes('<NORMALIZED_TIMESTAMP>') || leftLine.normalized.includes('<NORMALIZED_ID>');
+      const rightIsSpecial = rightLine.normalized.includes('<NORMALIZED_TIMESTAMP>') || rightLine.normalized.includes('<NORMALIZED_ID>');
+      
+      if (leftIsSpecial && rightIsSpecial) {
+        // Extract field names
+        const leftField = leftLine.normalized.match(/^(\s*"[^"]+"\s*:)/);
+        const rightField = rightLine.normalized.match(/^(\s*"[^"]+"\s*:)/);
+        
+        if (leftField && rightField && leftField[1] === rightField[1]) {
+          // Same field, both are timestamps/IDs - treat as unchanged
           matches.set(i, j);
           usedRight.add(j);
           break;
