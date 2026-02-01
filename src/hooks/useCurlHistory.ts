@@ -51,19 +51,7 @@ export function useCurlHistory() {
     };
 
     setHistory(prev => {
-      // Check if command already exists
-      // const exists = prev.find(item => item.command === command);
-      let updated: CurlHistoryItem[];
-      
-      // if (exists) {
-      //   // Move to top and update timestamp
-      //   updated = [
-      //     { ...exists, timestamp: Date.now(), localhostUrl },
-      //     ...prev.filter(item => item.command !== command)
-      //   ];
-      // } else {
-        updated = [newItem, ...prev].slice(0, MAX_HISTORY);
-      // }
+      const updated = [newItem, ...prev].slice(0, MAX_HISTORY);
       
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
       return updated;

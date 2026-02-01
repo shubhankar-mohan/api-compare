@@ -251,8 +251,13 @@ function computeWordDiff(leftLine: string, rightLine: string): { leftSegments: D
   };
 }
 
-// Simple diff for very small texts
-function computeSimpleDiff(leftLines: string[], rightLines: string[]): DiffResult {
+// Simple diff for very small texts with normalization
+function computeSimpleDiffWithNormalization(
+  leftLines: string[], 
+  rightLines: string[],
+  leftNormalized: string[],
+  rightNormalized: string[]
+): DiffResult {
   const left: DiffLine[] = [];
   const right: DiffLine[] = [];
   let additions = 0;
@@ -262,7 +267,8 @@ function computeSimpleDiff(leftLines: string[], rightLines: string[]): DiffResul
   
   for (let i = 0; i < maxLength; i++) {
     if (i < leftLines.length && i < rightLines.length) {
-      if (leftLines[i] === rightLines[i]) {
+      // Compare normalized versions
+      if (leftNormalized[i] === rightNormalized[i]) {
         left.push({ content: leftLines[i], type: 'unchanged', lineNumber: i + 1 });
         right.push({ content: rightLines[i], type: 'unchanged', lineNumber: i + 1 });
       } else {
@@ -291,9 +297,94 @@ function computeSimpleDiff(leftLines: string[], rightLines: string[]): DiffResul
   };
 }
 
-export function computeDiff(leftText: string, rightText: string, options?: { advancedMode?: boolean }): DiffResult {
-  // Early exit for identical content
-  if (leftText === rightText) {
+// Simple diff for very small texts (legacy - kept for backward compatibility)
+function computeSimpleDiff(leftLines: string[], rightLines: string[]): DiffResult {
+  // Use same normalized lines (no normalization)
+  return computeSimpleDiffWithNormalization(leftLines, rightLines, leftLines, rightLines);
+}
+
+// Configuration for comprehensive comparison
+export interface ComparisonConfig {
+  ignoreWhitespace?: boolean;
+  ignoreTrailingWhitespace?: boolean;
+  ignoreLineEndings?: boolean;
+  ignoreInvisibleCharacters?: boolean;
+  normalizeIndentation?: boolean;
+  tabSize?: number;
+  formatType?: 'json' | 'yaml' | 'xml' | 'text' | 'config';
+}
+
+// Normalize line for comparison
+function normalizeLine(line: string, config?: ComparisonConfig): string {
+  let normalized = line;
+  
+  // First, normalize line endings (do this first!)
+  normalized = normalized
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n/g, ''); // Remove any line endings within the line
+  
+  // Remove ALL invisible and problematic Unicode characters
+  normalized = normalized
+    .replace(/[\u0000-\u001F]/g, '') // Control characters
+    .replace(/[\u007F-\u009F]/g, '') // Delete and C1 control codes  
+    .replace(/\u200B/g, '')  // Zero-width space
+    .replace(/\u200C/g, '')  // Zero-width non-joiner
+    .replace(/\u200D/g, '')  // Zero-width joiner
+    .replace(/\uFEFF/g, '')  // BOM
+    .replace(/\u00A0/g, ' ') // Non-breaking space
+    .replace(/[\u2000-\u200A]/g, ' ') // Various Unicode spaces
+    .replace(/\u202F/g, ' ') // Narrow no-break space
+    .replace(/\u3000/g, ' ') // Ideographic space
+    .replace(/[\uE000-\uF8FF]/g, ''); // Private use area
+  
+  // Convert ALL tabs to spaces consistently
+  normalized = normalized.replace(/\t/g, '  ');
+  
+  // Handle leading whitespace/indentation
+  if (config?.normalizeIndentation !== false || config?.formatType === 'yaml') {
+    // For YAML and config files, normalize indentation more aggressively
+    const match = normalized.match(/^(\s*)(.*)/);
+    if (match) {
+      const [, indent, content] = match;
+      // Normalize the indentation (convert 4 spaces to 2, standardize)
+      const normalizedIndent = indent
+        .replace(/    /g, '  ') // 4 spaces to 2
+        .replace(/   /g, '  ')  // 3 spaces to 2
+        .replace(/     /g, '  '); // 5 spaces to 2
+      normalized = normalizedIndent + content;
+    }
+  }
+  
+  // Trim trailing whitespace (almost always want this)
+  normalized = normalized.trimEnd();
+  
+  // Additional whitespace handling
+  if (config?.ignoreWhitespace) {
+    // Complete whitespace normalization
+    normalized = normalized.replace(/\s+/g, ' ').trim();
+  }
+  
+  // For YAML files, also normalize quote styles around values
+  if (config?.formatType === 'yaml') {
+    // Remove quotes around simple values that don't need them
+    normalized = normalized.replace(/:\s*["']([^"']*?)["']\s*$/g, ': $1');
+    // Normalize spacing around colons
+    normalized = normalized.replace(/\s*:\s*/g, ': ');
+  }
+  
+  return normalized;
+}
+
+export function computeDiff(leftText: string, rightText: string, options?: { advancedMode?: boolean; config?: ComparisonConfig }): DiffResult {
+  const config = options?.config || {};
+  
+  // Normalize texts for comparison
+  const leftNormalized = normalizeLine(leftText, config);
+  const rightNormalized = normalizeLine(rightText, config);
+  
+  // Early exit for identical content after normalization
+  if (leftNormalized === rightNormalized) {
     const lines = leftText.split('\n');
     const unchangedLines: DiffLine[] = lines.map((line, i) => ({
       content: line,
@@ -312,23 +403,31 @@ export function computeDiff(leftText: string, rightText: string, options?: { adv
   const leftLines = leftText.split('\n');
   const rightLines = rightText.split('\n');
   
+  // Create normalized versions for comparison
+  const leftNormalizedLines = leftLines.map(line => normalizeLine(line, config));
+  const rightNormalizedLines = rightLines.map(line => normalizeLine(line, config));
+  
   // Use simple diff for very small texts - but check if lines are similar first
   if (leftLines.length < 10 && rightLines.length < 10) {
     // Check if we should use advanced diff even for small texts
     let shouldUseAdvanced = false;
     for (let i = 0; i < Math.min(leftLines.length, rightLines.length); i++) {
-      if (leftLines[i] !== rightLines[i] && calculateSimilarity(leftLines[i], rightLines[i]) > 0.2) {
+      // Compare normalized versions
+      if (leftNormalizedLines[i] !== rightNormalizedLines[i] && 
+          calculateSimilarity(leftNormalizedLines[i], rightNormalizedLines[i]) > 0.2) {
         shouldUseAdvanced = true;
         break;
       }
     }
     
     if (!shouldUseAdvanced) {
-      return computeSimpleDiff(leftLines, rightLines);
+      // Use normalized lines for simple diff comparison
+      return computeSimpleDiffWithNormalization(leftLines, rightLines, leftNormalizedLines, rightNormalizedLines);
     }
   }
 
-  const dp = lcs(leftLines, rightLines);
+  // Use normalized lines for LCS computation
+  const dp = lcs(leftNormalizedLines, rightNormalizedLines);
   
   const left: DiffLine[] = [];
   const right: DiffLine[] = [];
@@ -344,8 +443,9 @@ export function computeDiff(leftText: string, rightText: string, options?: { adv
 
   // Backtrack through LCS to build diff
   while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && leftLines[i - 1] === rightLines[j - 1]) {
-      // Lines match exactly
+    // Compare normalized versions but display original
+    if (i > 0 && j > 0 && leftNormalizedLines[i - 1] === rightNormalizedLines[j - 1]) {
+      // Lines match exactly after normalization
       tempLeft.unshift({
         content: leftLines[i - 1],
         type: 'unchanged',
@@ -362,13 +462,16 @@ export function computeDiff(leftText: string, rightText: string, options?: { adv
       // Check if lines are similar enough to pair for inline diff
       const leftLine = leftLines[i - 1];
       const rightLine = rightLines[j - 1];
+      const leftNormalized = leftNormalizedLines[i - 1];
+      const rightNormalized = rightNormalizedLines[j - 1];
       
       // Skip similarity calculation for very long lines or when advanced mode is disabled
       let similarity = 0;
       const useAdvanced = options?.advancedMode !== false;
       
-      if (useAdvanced && leftLine.length < 1000 && rightLine.length < 1000) {
-        similarity = calculateSimilarity(leftLine, rightLine);
+      // Use normalized lines for similarity calculation
+      if (useAdvanced && leftNormalized.length < 1000 && rightNormalized.length < 1000) {
+        similarity = calculateSimilarity(leftNormalized, rightNormalized);
       }
       
       // Lower threshold to 20% to catch more similar lines
@@ -385,7 +488,8 @@ export function computeDiff(leftText: string, rightText: string, options?: { adv
         let rightSegments: DiffSegment[] | undefined;
         
         if (useAdvanced) {
-          const result = computeWordDiff(leftLines[i - 1], rightLines[j - 1]);
+          // Use normalized lines for word diff to avoid false positives
+          const result = computeWordDiff(leftNormalized, rightNormalized);
           leftSegments = result.leftSegments;
           rightSegments = result.rightSegments;
         }
