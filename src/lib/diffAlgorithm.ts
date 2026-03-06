@@ -23,10 +23,22 @@ export interface DiffResult {
   hasDifferences: boolean;
 }
 
+// Maximum number of lines for full LCS (O(m*n) memory/time)
+// Beyond this, fall back to a simpler diff to avoid page crashes
+const LCS_MAX_LINES = 1500;
+
 // Longest Common Subsequence algorithm for optimal diff
 function lcs<T>(a: T[], b: T[]): number[][] {
   const m = a.length;
   const n = b.length;
+
+  // Guard: if inputs are too large, the O(m*n) table will crash the browser
+  if (m > LCS_MAX_LINES || n > LCS_MAX_LINES) {
+    // Return a dummy DP table that forces simple line-by-line comparison
+    // (all zeros means no common subsequence found → every line is a diff)
+    return Array(m + 1).fill(null).map(() => [0]);
+  }
+
   const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
 
   for (let i = 1; i <= m; i++) {
@@ -50,8 +62,10 @@ function calculateSimilarity(str1: string, str2: string): number {
   if (str1 === str2) return 1;
   if (!str1 || !str2) return 0;
   
-  // Create cache key based on string characteristics
-  const cacheKey = `${str1.length}:${str2.length}:${str1.substring(0, 20)}:${str2.substring(0, 20)}`;
+  // Create cache key - use full content hash for short strings, sampled for long strings
+  const sample1 = str1.length <= 100 ? str1 : `${str1.length}:${str1.substring(0, 50)}:${str1.substring(str1.length - 50)}`;
+  const sample2 = str2.length <= 100 ? str2 : `${str2.length}:${str2.substring(0, 50)}:${str2.substring(str2.length - 50)}`;
+  const cacheKey = `${sample1}|||${sample2}`;
   
   // Check cache first
   if (similarityCache.has(cacheKey)) {
@@ -68,9 +82,11 @@ function calculateSimilarity(str1: string, str2: string): number {
   
   // Cache the result (limit cache size to prevent memory issues)
   if (similarityCache.size > 1000) {
-    // Clear oldest entries
-    const firstKey = similarityCache.keys().next().value;
-    similarityCache.delete(firstKey);
+    // Clear half the cache to avoid frequent single-item evictions
+    const keys = Array.from(similarityCache.keys());
+    for (let k = 0; k < 500; k++) {
+      similarityCache.delete(keys[k]);
+    }
   }
   similarityCache.set(cacheKey, similarity);
   
@@ -79,31 +95,35 @@ function calculateSimilarity(str1: string, str2: string): number {
 
 // Levenshtein distance for string similarity
 function levenshteinDistance(str1: string, str2: string): number {
-  const matrix: number[][] = [];
-  
-  for (let i = 0; i <= str2.length; i++) {
-    matrix[i] = [i];
-  }
-  
-  for (let j = 0; j <= str1.length; j++) {
-    matrix[0][j] = j;
-  }
-  
-  for (let i = 1; i <= str2.length; i++) {
-    for (let j = 1; j <= str1.length; j++) {
-      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
+  // Cap input length to avoid massive O(n*m) allocation
+  const MAX_LEN = 300;
+  const s1 = str1.length > MAX_LEN ? str1.substring(0, MAX_LEN) : str1;
+  const s2 = str2.length > MAX_LEN ? str2.substring(0, MAX_LEN) : str2;
+
+  // Use single-row optimization: O(min(m,n)) space instead of O(m*n)
+  const a = s1.length > s2.length ? s2 : s1;
+  const b = s1.length > s2.length ? s1 : s2;
+  const aLen = a.length;
+  const bLen = b.length;
+
+  let prev = new Array(aLen + 1);
+  let curr = new Array(aLen + 1);
+
+  for (let j = 0; j <= aLen; j++) prev[j] = j;
+
+  for (let i = 1; i <= bLen; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= aLen; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        curr[j] = prev[j - 1];
       } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
+        curr[j] = Math.min(prev[j - 1] + 1, curr[j - 1] + 1, prev[j] + 1);
       }
     }
+    [prev, curr] = [curr, prev];
   }
-  
-  return matrix[str2.length][str1.length];
+
+  return prev[aLen];
 }
 
 // Compute character-level diff for more precise highlighting
@@ -300,12 +320,6 @@ function computeSimpleDiffWithNormalization(
   };
 }
 
-// Simple diff for very small texts (legacy - kept for backward compatibility)
-function computeSimpleDiff(leftLines: string[], rightLines: string[]): DiffResult {
-  // Use same normalized lines (no normalization)
-  return computeSimpleDiffWithNormalization(leftLines, rightLines, leftLines, rightLines);
-}
-
 // Configuration for comprehensive comparison
 export interface ComparisonConfig {
   ignoreWhitespace?: boolean;
@@ -350,11 +364,9 @@ function normalizeLine(line: string, config?: ComparisonConfig): string {
     const match = normalized.match(/^(\s*)(.*)/);
     if (match) {
       const [, indent, content] = match;
-      // Normalize the indentation (convert 4 spaces to 2, standardize)
-      const normalizedIndent = indent
-        .replace(/    /g, '  ') // 4 spaces to 2
-        .replace(/   /g, '  ')  // 3 spaces to 2
-        .replace(/     /g, '  '); // 5 spaces to 2
+      // Count the indent level (treat any 2-5 space group as one indent level)
+      const indentLevel = Math.round(indent.length / 2);
+      const normalizedIndent = '  '.repeat(indentLevel);
       normalized = normalizedIndent + content;
     }
   }
@@ -418,11 +430,16 @@ export function computeDiff(leftText: string, rightText: string, options?: { adv
   
   const leftLines = leftText.split('\n');
   const rightLines = rightText.split('\n');
-  
+
   // Create normalized versions for comparison
   const leftNormalizedLines = leftLines.map(line => normalizeLine(line, config));
   const rightNormalizedLines = rightLines.map(line => normalizeLine(line, config));
-  
+
+  // For very large texts, use simple line-by-line diff to avoid O(m*n) crash
+  if (leftLines.length > LCS_MAX_LINES || rightLines.length > LCS_MAX_LINES) {
+    return computeSimpleDiffWithNormalization(leftLines, rightLines, leftNormalizedLines, rightNormalizedLines);
+  }
+
   // Use simple diff for very small texts - but check if lines are similar first
   if (leftLines.length < 10 && rightLines.length < 10) {
     // Check if we should use advanced diff even for small texts

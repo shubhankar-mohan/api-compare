@@ -69,14 +69,19 @@ function normalizeValue(value: any, options: DiffOptions): any {
 // Check if a path should be ignored
 function shouldIgnorePath(path: string, ignorePaths?: string[]): boolean {
   if (!ignorePaths || ignorePaths.length === 0) return false;
-  
+
   return ignorePaths.some(ignorePath => {
-    // Support wildcard patterns
+    // Support wildcard patterns - escape all regex special chars except *
     const pattern = ignorePath
       .replace(/\$/g, '')
-      .replace(/\./g, '\\.')
+      .replace(/[.+?^{}()|[\]\\]/g, '\\$&')
       .replace(/\*/g, '.*');
-    return new RegExp(`^${pattern}$`).test(path);
+    try {
+      return new RegExp(`^${pattern}$`).test(path);
+    } catch {
+      // If regex construction fails, fall back to simple string matching
+      return path === ignorePath.replace(/\$/g, '');
+    }
   });
 }
 
@@ -107,10 +112,7 @@ function deepEqual(a: any, b: any, options: DiffOptions, path: string = ''): boo
   
   // Type check
   if (typeof normalizedA !== typeof normalizedB) {
-    // Semantic comparison might make different types equal
-    if (options.semanticComparison) {
-      return normalizeValue(normalizedA, options) === normalizeValue(normalizedB, options);
-    }
+    // Values are already normalized; if types still differ, they are not equal
     return false;
   }
   
@@ -378,8 +380,9 @@ export function computeEnhancedDiff(
   rightText: string,
   options: DiffOptions = {}
 ): EnhancedDiffResult {
-  // Clear similarity cache for new comparison
+  // Clear caches for new comparison
   clearSimilarityCache();
+  deepEqualCache.clear();
   
   // Early exit for identical content
   if (leftText === rightText) {

@@ -255,31 +255,34 @@ function getCommonSuffixLength(str1: string, str2: string): number {
  * Levenshtein distance for string similarity
  */
 function levenshteinDistance(str1: string, str2: string): number {
-  const matrix: number[][] = [];
-  
-  for (let i = 0; i <= str2.length; i++) {
-    matrix[i] = [i];
-  }
-  
-  for (let j = 0; j <= str1.length; j++) {
-    matrix[0][j] = j;
-  }
-  
-  for (let i = 1; i <= str2.length; i++) {
-    for (let j = 1; j <= str1.length; j++) {
-      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
+  // Cap input length to avoid massive allocation
+  const MAX_LEN = 300;
+  const s1 = str1.length > MAX_LEN ? str1.substring(0, MAX_LEN) : str1;
+  const s2 = str2.length > MAX_LEN ? str2.substring(0, MAX_LEN) : str2;
+
+  const a = s1.length > s2.length ? s2 : s1;
+  const b = s1.length > s2.length ? s1 : s2;
+  const aLen = a.length;
+  const bLen = b.length;
+
+  let prev = new Array(aLen + 1);
+  let curr = new Array(aLen + 1);
+
+  for (let j = 0; j <= aLen; j++) prev[j] = j;
+
+  for (let i = 1; i <= bLen; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= aLen; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        curr[j] = prev[j - 1];
       } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
+        curr[j] = Math.min(prev[j - 1] + 1, curr[j - 1] + 1, prev[j] + 1);
       }
     }
+    [prev, curr] = [curr, prev];
   }
-  
-  return matrix[str2.length][str1.length];
+
+  return prev[aLen];
 }
 
 /**
@@ -373,18 +376,23 @@ export function computeStructuralDiff(
   };
   
   const rightUsed = new Set<number>();
+  const matchedRightIndices = new Set<number>(matches.values());
   const modifiedPairs = new Map<number, number>(); // Track similar but not identical lines
-  
+
+  // Skip expensive similarity search for very large diffs to avoid page crashes
+  const MAX_LINES_FOR_SIMILARITY = 1500;
+  const skipSimilarity = leftLines.length > MAX_LINES_FOR_SIMILARITY || rightLines.length > MAX_LINES_FOR_SIMILARITY;
+
   // First, find similar lines that should be marked as modified
-  for (let i = 0; i < leftLines.length; i++) {
+  for (let i = 0; i < leftLines.length && !skipSimilarity; i++) {
     if (matches.has(i)) continue; // Already matched exactly
-    
+
     const leftNorm = normalizeLine(leftLines[i], config);
-    
+
     // Look for similar lines in the right side
     for (let j = 0; j < rightLines.length; j++) {
-      if (rightUsed.has(j) || Array.from(matches.values()).includes(j)) continue;
-      
+      if (rightUsed.has(j) || matchedRightIndices.has(j)) continue;
+
       const rightNorm = normalizeLine(rightLines[j], config);
       const similarity = calculateSimilarity(leftNorm, rightNorm);
       
@@ -529,8 +537,16 @@ export function computeStructuralDiff(
     }
   }
   
-  // Fill in empty slots in right side
-  for (let i = 0; i < result.left.length; i++) {
+  // Ensure left and right are the same length, filling in all gaps
+  const maxLen = Math.max(result.left.length, result.right.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (!result.left[i]) {
+      result.left[i] = {
+        content: '',
+        type: 'empty',
+        lineNumber: null
+      };
+    }
     if (!result.right[i]) {
       result.right[i] = {
         content: '',
@@ -539,15 +555,6 @@ export function computeStructuralDiff(
       };
     }
   }
-  
-  // Add any remaining right lines
-  while (result.right.length < result.left.length) {
-    result.right.push({
-      content: '',
-      type: 'empty',
-      lineNumber: null
-    });
-  }
-  
+
   return result;
 }
