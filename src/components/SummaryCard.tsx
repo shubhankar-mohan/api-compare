@@ -1,13 +1,14 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { 
-  CheckCircle2, 
-  XCircle, 
-  FileText, 
+import {
+  CheckCircle2,
+  XCircle,
+  FileText,
   ArrowLeftRight,
   Globe,
   Server,
-  Zap
+  Zap,
+  Clock
 } from 'lucide-react';
 import { ApiResponse } from '@/lib/requestExecutor';
 
@@ -25,6 +26,12 @@ export function SummaryCard({ original, localhost, hasDifferences }: SummaryCard
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const formatTime = (ms?: number): string => {
+    if (ms === undefined) return '-';
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(2)}s`;
   };
 
   const getStatusVariant = (status: number, success: boolean) => {
@@ -54,10 +61,13 @@ export function SummaryCard({ original, localhost, hasDifferences }: SummaryCard
               </div>
               <span className="font-semibold">Original Domain</span>
             </div>
+            <p className="text-xs text-muted-foreground font-mono truncate mb-2" title={original.url}>
+              {original.url}
+            </p>
             <div className="flex items-center gap-4">
               <div className="flex-1">
                 <p className="text-xs text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Status</p>
-                <Badge 
+                <Badge
                   variant={getStatusVariant(original.status, original.success) as any}
                   className="text-sm px-3 py-1"
                 >
@@ -71,6 +81,13 @@ export function SummaryCard({ original, localhost, hasDifferences }: SummaryCard
                   <span className="font-semibold text-lg">{formatSize(original.size)}</span>
                 </div>
               </div>
+              <div className="flex-1">
+                <p className="text-xs text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Time</p>
+                <div className="flex items-center gap-1.5">
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span className="font-semibold text-lg">{formatTime(original.responseTime)}</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -82,10 +99,13 @@ export function SummaryCard({ original, localhost, hasDifferences }: SummaryCard
               </div>
               <span className="font-semibold">Localhost</span>
             </div>
+            <p className="text-xs text-muted-foreground font-mono truncate mb-2" title={localhost.url}>
+              {localhost.url}
+            </p>
             <div className="flex items-center gap-4">
               <div className="flex-1">
                 <p className="text-xs text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Status</p>
-                <Badge 
+                <Badge
                   variant={getStatusVariant(localhost.status, localhost.success) as any}
                   className="text-sm px-3 py-1"
                 >
@@ -97,6 +117,13 @@ export function SummaryCard({ original, localhost, hasDifferences }: SummaryCard
                 <div className="flex items-center gap-1.5">
                   <Zap className="h-4 w-4 text-warning" />
                   <span className="font-semibold text-lg">{formatSize(localhost.size)}</span>
+                </div>
+              </div>
+              <div className="flex-1">
+                <p className="text-xs text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Time</p>
+                <div className="flex items-center gap-1.5">
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span className="font-semibold text-lg">{formatTime(localhost.responseTime)}</span>
                 </div>
               </div>
             </div>

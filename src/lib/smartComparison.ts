@@ -144,8 +144,17 @@ export function compareArrays(
   
   if (options.mode === 'by-key' && options.keyField) {
     // Match by key field (like 'id')
-    const map1 = new Map(arr1.map(item => [item[options.keyField], item]));
-    const map2 = new Map(arr2.map(item => [item[options.keyField], item]));
+    const keyField = options.keyField;
+    const map1 = new Map(
+      arr1
+        .filter(item => item != null && typeof item === 'object' && keyField in item)
+        .map(item => [item[keyField], item])
+    );
+    const map2 = new Map(
+      arr2
+        .filter(item => item != null && typeof item === 'object' && keyField in item)
+        .map(item => [item[keyField], item])
+    );
     
     const added = [];
     const removed = [];
@@ -305,29 +314,44 @@ export function generateDiffSummary(diff: any): string {
     ignored: 0,
     structural: 0
   };
-  
-  // Count differences
-  // ... (implementation based on diff structure)
-  
+
+  // Count differences from left and right diff lines
+  if (diff?.left && Array.isArray(diff.left)) {
+    for (const line of diff.left) {
+      if (line.type === 'unchanged') stats.identical++;
+      else if (line.type === 'removed') stats.removed++;
+      else if (line.type === 'modified') stats.modified++;
+    }
+  }
+  if (diff?.right && Array.isArray(diff.right)) {
+    for (const line of diff.right) {
+      if (line.type === 'added') stats.added++;
+    }
+  }
+  // Count structural changes if available
+  if (diff?.structuralChanges && Array.isArray(diff.structuralChanges)) {
+    stats.structural = diff.structuralChanges.length;
+  }
+
   const lines = [];
-  lines.push('📊 Comparison Summary:');
-  lines.push(`✅ ${stats.identical} fields identical`);
-  
+  lines.push('Comparison Summary:');
+  lines.push(`${stats.identical} fields identical`);
+
   if (stats.modified > 0) {
-    lines.push(`✏️  ${stats.modified} fields modified`);
+    lines.push(`${stats.modified} fields modified`);
   }
   if (stats.added > 0) {
-    lines.push(`➕ ${stats.added} fields added`);
+    lines.push(`${stats.added} fields added`);
   }
   if (stats.removed > 0) {
-    lines.push(`➖ ${stats.removed} fields removed`);
+    lines.push(`${stats.removed} fields removed`);
   }
   if (stats.ignored > 0) {
-    lines.push(`🔇 ${stats.ignored} fields auto-ignored (timestamps/IDs)`);
+    lines.push(`${stats.ignored} fields auto-ignored (timestamps/IDs)`);
   }
   if (stats.structural > 0) {
-    lines.push(`🏗️  ${stats.structural} structural changes`);
+    lines.push(`${stats.structural} structural changes`);
   }
-  
+
   return lines.join('\n');
 }

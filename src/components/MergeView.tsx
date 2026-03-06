@@ -146,11 +146,19 @@ export function MergeView({
 
   // Download merged result
   const downloadMergedResult = () => {
+    // Detect if content is JSON, use appropriate extension
+    let extension = 'txt';
+    try {
+      JSON.parse(mergedResult);
+      extension = 'json';
+    } catch {
+      // Not JSON, use txt
+    }
     const blob = new Blob([mergedResult], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'merged-result.json';
+    a.download = `merged-result.${extension}`;
     a.click();
     URL.revokeObjectURL(url);
   };

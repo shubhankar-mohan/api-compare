@@ -211,20 +211,12 @@ function DiffPanel({
         {displayLines.map((line, idx) => {
           const originalIndex = lines.indexOf(line);
           const isHighlighted = highlightedLine?.side === side && highlightedLine?.line === originalIndex;
-          
-          // Scroll to highlighted line
-          if (isHighlighted) {
-            setTimeout(() => {
-              const element = document.getElementById(`diff-line-${side}-${originalIndex}`);
-              element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }, 100);
-          }
-          
+
           return (
-            <DiffLineComponent 
-              key={idx} 
-              line={line} 
-              side={side} 
+            <DiffLineComponent
+              key={idx}
+              line={line}
+              side={side}
               isJson={isJson}
               isHighlighted={isHighlighted}
               lineIndex={originalIndex}
@@ -351,6 +343,14 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [searchResults, currentSearchIndex]);
 
+  // Scroll to highlighted line when it changes
+  useEffect(() => {
+    if (highlightedLine) {
+      const element = document.getElementById(`diff-line-${highlightedLine.side}-${highlightedLine.line}`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlightedLine]);
+
   const isJsonResponse = useMemo(() => {
     try {
       JSON.parse(original.body);
@@ -441,7 +441,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                           placeholder="$.user.name"
                           value={pathInput}
                           onChange={(e) => setPathInput(e.target.value)}
-                          onKeyPress={(e) => e.key === 'Enter' && handlePathNavigation()}
+                          onKeyDown={(e) => e.key === 'Enter' && handlePathNavigation()}
                           className="flex-1"
                         />
                         <Button

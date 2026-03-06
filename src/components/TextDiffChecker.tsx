@@ -330,42 +330,18 @@ export function TextDiffChecker() {
       return;
     }
     setHasCompared(true);
-    
-    // Calculate the difference count based on the current diff
-    const left = isJson ? formatJson(leftText) : leftText;
-    const right = isJson ? formatJson(rightText) : rightText;
-    
-    // Use same config as display diff
-    let formatType: 'json' | 'yaml' | 'text' = 'text';
-    if (isJson) {
-      formatType = 'json';
-    } else if (leftFileName?.endsWith('.yml') || leftFileName?.endsWith('.yaml') || 
-               rightFileName?.endsWith('.yml') || rightFileName?.endsWith('.yaml') ||
-               leftText.includes('services:') || leftText.includes('version:')) {
-      formatType = 'yaml';
-    }
-    
-    const config: ComparisonConfig = {
-      ignoreTrailingWhitespace: true,
-      ignoreLineEndings: true,
-      ignoreInvisibleCharacters: true,
-      normalizeIndentation: formatType === 'yaml',
-      tabSize: 2,
-      formatType: formatType as any
-    };
-    
-    // Use structural diff for YAML files to handle missing fields better
-    const currentDiff = formatType === 'yaml' 
-      ? computeStructuralDiff(left, right, config)
-      : computeDiff(left, right, { advancedMode: true, config });
-    const diffCount = currentDiff.additions + currentDiff.removals;
-    
-    toast({ 
-      title: 'Comparison complete', 
-      description: currentDiff.hasDifferences 
-        ? `${diffCount} difference${diffCount === 1 ? '' : 's'} found` 
-        : 'Texts are identical'
-    });
+
+    // Use the memoized diff result after state update triggers recompute
+    // We schedule the toast for after the next render when diff is available
+    setTimeout(() => {
+      const left = isJson ? formatJson(leftText) : leftText;
+      const right = isJson ? formatJson(rightText) : rightText;
+      const hasDiff = left !== right;
+      toast({
+        title: 'Comparison complete',
+        description: hasDiff ? 'Differences found' : 'Texts are identical'
+      });
+    }, 0);
   };
 
   const handleClear = () => {
@@ -778,7 +754,28 @@ export function TextDiffChecker() {
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 relative">
+              {/* Swap button */}
+              <div className="hidden md:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-8 p-0 rounded-full shadow-md bg-card hover:bg-muted"
+                  onClick={() => {
+                    setLeftText(rightText);
+                    setRightText(leftText);
+                    setLeftFileName(rightFileName);
+                    setRightFileName(leftFileName);
+                    if (!realTimeDiff) setHasCompared(false);
+                    toast({ title: 'Swapped', description: 'Text A and B have been swapped' });
+                  }}
+                  disabled={!leftText.trim() && !rightText.trim()}
+                  title="Swap Text A and B"
+                >
+                  <ArrowRightLeft className="h-3.5 w-3.5" />
+                </Button>
+              </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">

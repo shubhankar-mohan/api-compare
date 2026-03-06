@@ -289,7 +289,7 @@ const Index = () => {
           </div>
           <div className="border-t pt-6">
             <p className="text-sm text-muted-foreground text-center">
-              © 2024 Virtualis World. Created with ❤️ for developers worldwide.
+              © 2025 Virtualis World. Created with ❤️ for developers worldwide.
             </p>
           </div>
         </div>

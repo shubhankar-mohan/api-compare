@@ -31,7 +31,7 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
     e.preventDefault();
     if (isCompareMode) {
       // In compare mode, both fields should have cURL commands
-      if (curlCommand.length > 0 || localhostUrl.length > 0) {
+      if (curlCommand.length > 0 && localhostUrl.length > 0) {
         saveToHistory(curlCommand, localhostUrl);
         onSubmit(curlCommand, localhostUrl);
       }
@@ -42,6 +42,14 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
         saveToHistory(curlCommand, baseUrl);
         onSubmit(curlCommand, baseUrl);
       }
+    }
+  };
+
+  // Handle Ctrl+Enter to submit
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !isLoading) {
+      e.preventDefault();
+      handleSubmit(e as unknown as React.FormEvent);
     }
   };
 
@@ -86,8 +94,8 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
             </CardDescription>
           </div>
           <div className="flex items-center gap-2 mt-1">
-            <Label htmlFor="compare-mode" className="text-sm text-muted-foreground">
-              {isCompareMode ? 'Prod vs Localhost' : 'Any Environment'}
+            <Label htmlFor="compare-mode" className="text-sm text-muted-foreground cursor-pointer">
+              {isCompareMode ? 'Any Environment' : 'Prod vs Localhost'}
             </Label>
             <Switch
               id="compare-mode"
@@ -122,15 +130,11 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
                       onClick={() => loadFromHistory(item.command, item.localhostUrl)}
                     >
                       <div className="flex-1 min-w-0">
-                      <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                           <Clock className="h-3 w-3" />
                           {formatTimestamp(item.timestamp)}
                         </p>
                         <p className="font-mono text-xs text-muted-foreground truncate whitespace-pre-line mt-0.5">{truncateCommand(item.command, item.localhostUrl)}</p>
-                        {/* <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                          <Clock className="h-3 w-3" />
-                          {formatTimestamp(item.timestamp)}
-                        </p> */}
                       </div>
                       <Button
                         type="button"
@@ -149,7 +153,12 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive"
-                    onClick={clearHistory}
+                    onClick={() => {
+                      if (window.confirm('Clear all saved history? This cannot be undone.')) {
+                        clearHistory();
+                        toast({ title: 'History cleared', description: 'All saved commands have been removed' });
+                      }
+                    }}
                   >
                     <Trash2 className="h-3.5 w-3.5 mr-2" />
                     Clear all history
@@ -196,6 +205,7 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
                   placeholder={exampleCurl}
                   value={curlCommand}
                   onChange={(e) => setCurlCommand(e.target.value)}
+                  onKeyDown={handleKeyDown}
                   className="font-mono text-sm min-h-[140px] resize-y bg-muted/50 border-2 focus:border-primary/50 transition-colors"
                 />
               </div>
@@ -234,6 +244,7 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
                   placeholder={exampleCurl}
                   value={localhostUrl}
                   onChange={(e) => setLocalhostUrl(e.target.value)}
+                  onKeyDown={handleKeyDown}
                   className="font-mono text-sm min-h-[140px] resize-y bg-muted/50 border-2 focus:border-primary/50 transition-colors"
                 />
               </div>
@@ -275,6 +286,7 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
                   placeholder={exampleCurl}
                   value={curlCommand}
                   onChange={(e) => setCurlCommand(e.target.value)}
+                  onKeyDown={handleKeyDown}
                   className="font-mono text-sm min-h-[140px] resize-y bg-muted/50 border-2 focus:border-primary/50 transition-colors"
                 />
               </div>
@@ -283,9 +295,8 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
                 <Label htmlFor="localhost-url" className="text-sm font-semibold">Localhost Base URL</Label>
                 <Input
                   id="localhost-url"
-                  type="url"
                   placeholder="http://localhost:8080"
-                  value={localhostUrl || 'http://localhost:8080'}
+                  value={localhostUrl}
                   onChange={(e) => setLocalhostUrl(e.target.value)}
                   className="font-mono bg-muted/50 border-2 focus:border-primary/50 transition-colors"
                 />
@@ -298,7 +309,7 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
 
           <Button 
             type="submit" 
-            disabled={isLoading || (isCompareMode ? (curlCommand.length === 0 && localhostUrl.length === 0) : curlCommand.length === 0)}
+            disabled={isLoading || (isCompareMode ? (curlCommand.length === 0 || localhostUrl.length === 0) : curlCommand.length === 0)}
             className="w-full h-12 text-base font-semibold shadow-md hover:shadow-lg transition-all"
             size="lg"
           >
@@ -311,6 +322,9 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
               <>
                 <ArrowRightLeft className="mr-2 h-5 w-5" />
                 Get and Compare Responses
+                <kbd className="ml-2 px-1.5 py-0.5 text-xs font-medium bg-primary-foreground/20 rounded hidden sm:inline-block">
+                  {navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+↵
+                </kbd>
               </>
             )}
           </Button>

@@ -1,4 +1,4 @@
-import { ParsedCurl, replaceUrlDomain } from './curlParser';
+import { ParsedCurl } from './curlParser';
 
 export interface ApiResponse {
   status: number;
@@ -9,6 +9,7 @@ export interface ApiResponse {
   success: boolean;
   error?: string;
   url: string;
+  responseTime?: number; // milliseconds
 }
 
 // Standard HTTP status text mapping for consistent display
@@ -47,6 +48,7 @@ function getStatusText(status: number, responseStatusText: string): string {
 }
 
 async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiResponse> {
+  const startTime = performance.now();
   try {
     const fetchOptions: RequestInit = {
       method: parsed.method,
@@ -59,7 +61,8 @@ async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiRespo
     }
 
     const response = await fetch(url, fetchOptions);
-    
+    const responseTime = Math.round(performance.now() - startTime);
+
     const headersObj: Record<string, string> = {};
     response.headers.forEach((value, key) => {
       headersObj[key] = value;
@@ -75,6 +78,7 @@ async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiRespo
       size: new Blob([bodyText]).size,
       success: true,
       url,
+      responseTime,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
