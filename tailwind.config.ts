@@ -72,8 +72,8 @@ export default {
 		},
   		borderRadius: {
   			lg: 'var(--radius)',
-  			md: 'calc(var(--radius) - 2px)',
-  			sm: 'calc(var(--radius) - 4px)'
+  			md: 'calc(var(--radius) - 4px)',
+  			sm: 'calc(var(--radius) - 8px)'
   		},
   		keyframes: {
   			'accordion-down': {
@@ -99,29 +99,17 @@ export default {
   		},
   		fontFamily: {
   			sans: [
-  				'Inter',
-  				'ui-sans-serif',
+  				'Roboto',
   				'system-ui',
   				'-apple-system',
   				'BlinkMacSystemFont',
   				'Segoe UI',
-  				'Roboto',
   				'Helvetica Neue',
   				'Arial',
-  				'Noto Sans',
   				'sans-serif'
   			],
-  			serif: [
-  				'Lora',
-  				'ui-serif',
-  				'Georgia',
-  				'Cambria',
-  				'Times New Roman',
-  				'Times',
-  				'serif'
-  			],
   			mono: [
-  				'Space Mono',
+  				'Roboto Mono',
   				'ui-monospace',
   				'SFMono-Regular',
   				'Menlo',
@@ -140,7 +128,10 @@ export default {
   			lg: 'var(--shadow-lg)',
   			xl: 'var(--shadow-xl)',
   			'2xl': 'var(--shadow-2xl)'
-  		}
+  		},
+		transitionTimingFunction: {
+			'md3': 'cubic-bezier(0.2, 0, 0, 1)'
+		}
   	}
   },
   plugins: [require("tailwindcss-animate")],
