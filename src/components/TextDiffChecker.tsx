@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -6,17 +6,30 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
+import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   ArrowRightLeft, FileText, Copy, Trash2, Minus, Plus, Globe, Server,
   Wand2, CaseLower, SortAsc, WrapText, Scissors, RotateCcw, Settings,
-  ChevronLeft, ChevronRight, GitMerge, Upload, Download, Search, Replace
+  ChevronLeft, ChevronRight, GitMerge, Upload, Download, Search, Replace,
+  Rows3, FoldVertical, GitBranch, TrendingUp, Code2
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { computeDiff, formatJson, DiffLine, DiffSegment, ComparisonConfig } from '@/lib/diffAlgorithm';
 import { computeStructuralDiff } from '@/lib/structuralDiff';
+import {
+  computeEnhancedDiff,
+  DiffOptions,
+  EnhancedDiffResult,
+  searchInDiff,
+  navigateToPath
+} from '@/lib/enhancedDiffAlgorithm';
 import { cn } from '@/lib/utils';
 import { JsonSyntaxHighlight } from './JsonSyntaxHighlight';
+import { FoldableJson } from './FoldableJson';
 import { MergeView } from './MergeView';
+import { DiffOptionsPanel, DiffSearchBar } from './DiffOptions';
 import {
   Dialog,
   DialogContent,
@@ -250,14 +263,14 @@ function ToolButton({ icon: Icon, label, onClick, disabled }: ToolButtonProps) {
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "flex items-center gap-1.5 w-full px-2 py-1.5 text-xs text-left rounded-lg transition-colors",
+        "flex items-center gap-2 w-full px-2.5 py-2 text-xs text-left rounded-xl transition-colors",
         "hover:bg-muted text-foreground",
         disabled && "opacity-50 cursor-not-allowed"
       )}
       title={label}
     >
       <Icon className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-      <span className="truncate">{label}</span>
+      <span>{label}</span>
     </button>
   );
 }
@@ -278,6 +291,12 @@ export function TextDiffChecker() {
   const [findText, setFindText] = useState('');
   const [replaceText, setReplaceText] = useState('');
   const [replaceTarget, setReplaceTarget] = useState<'left' | 'right' | 'both'>('both');
+  const [viewMode, setViewMode] = useState<'diff' | 'foldable' | 'merge'>('diff');
+  const [diffOptions, setDiffOptions] = useState<DiffOptions>({});
+  const [searchResults, setSearchResults] = useState<ReturnType<typeof searchInDiff>>([]);
+  const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
+  const [pathInput, setPathInput] = useState('');
+  const [highlightedLine, setHighlightedLine] = useState<{ line: number; side: 'left' | 'right' } | null>(null);
 
   const isJson = useMemo(() => {
     try {
@@ -292,21 +311,28 @@ export function TextDiffChecker() {
 
   const shouldShowDiff = realTimeDiff || hasCompared;
 
+  // Calculate content size for advanced mode auto-detection
+  const contentSize = useMemo(() => {
+    const leftLines = leftText.split('\n').length;
+    const rightLines = rightText.split('\n').length;
+    return Math.max(leftLines, rightLines);
+  }, [leftText, rightText]);
+
   const diff = useMemo(() => {
     if (!shouldShowDiff) return null;
     const left = isJson ? formatJson(leftText) : leftText;
     const right = isJson ? formatJson(rightText) : rightText;
-    
+
     // Detect file type and apply appropriate config
     let formatType: 'json' | 'yaml' | 'text' = 'text';
     if (isJson) {
       formatType = 'json';
-    } else if (leftFileName?.endsWith('.yml') || leftFileName?.endsWith('.yaml') || 
+    } else if (leftFileName?.endsWith('.yml') || leftFileName?.endsWith('.yaml') ||
                rightFileName?.endsWith('.yml') || rightFileName?.endsWith('.yaml') ||
                leftText.includes('services:') || leftText.includes('version:')) {
       formatType = 'yaml';
     }
-    
+
     const config: ComparisonConfig = {
       ignoreTrailingWhitespace: true,
       ignoreLineEndings: true,
@@ -315,14 +341,27 @@ export function TextDiffChecker() {
       tabSize: 2,
       formatType: formatType as any
     };
-    
+
+    // Check if any enhanced options are enabled
+    const hasOptions = diffOptions.semanticComparison ||
+                      diffOptions.ignoreCase ||
+                      diffOptions.ignoreWhitespace ||
+                      diffOptions.detectArrayMoves ||
+                      (diffOptions.ignoreKeys && diffOptions.ignoreKeys.length > 0) ||
+                      (diffOptions.ignorePaths && diffOptions.ignorePaths.length > 0);
+
+    // Use enhanced diff when options are set
+    if (hasOptions || diffOptions.advancedMode !== false) {
+      return computeEnhancedDiff(left, right, diffOptions) as EnhancedDiffResult;
+    }
+
     // Use structural diff for YAML files to handle missing fields better
     if (formatType === 'yaml') {
       return computeStructuralDiff(left, right, config);
     }
-    
+
     return computeDiff(left, right, { advancedMode: true, config });
-  }, [leftText, rightText, shouldShowDiff, isJson, leftFileName, rightFileName]);
+  }, [leftText, rightText, shouldShowDiff, isJson, leftFileName, rightFileName, diffOptions]);
 
   const handleCompare = () => {
     if (!leftText.trim() && !rightText.trim()) {
@@ -355,6 +394,64 @@ export function TextDiffChecker() {
     setAcceptedChanges(new Set());
   };
 
+  // Handle search in diff
+  const handleSearch = (query: string, options: { caseSensitive?: boolean; regex?: boolean }) => {
+    if (!diff) return;
+    const results = searchInDiff(diff as EnhancedDiffResult, query, options);
+    setSearchResults(results);
+    setCurrentSearchIndex(0);
+    if (results.length > 0) {
+      setHighlightedLine({ line: results[0].line, side: results[0].side });
+      toast({ title: `Found ${results.length} match${results.length !== 1 ? 'es' : ''}`, description: 'Use Cmd/Ctrl+N/P to navigate' });
+    } else {
+      toast({ title: 'No matches found', variant: 'destructive' });
+    }
+  };
+
+  // Handle path navigation
+  const handlePathNavigation = () => {
+    if (!pathInput.trim() || !diff) return;
+    const result = navigateToPath(diff as EnhancedDiffResult, pathInput);
+    if (result) {
+      setHighlightedLine(result);
+      toast({ title: 'Path found', description: `Navigated to ${pathInput}` });
+    } else {
+      toast({ title: 'Path not found', description: `Could not find ${pathInput}`, variant: 'destructive' });
+    }
+  };
+
+  // Keyboard navigation for search results
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (searchResults.length === 0) return;
+      if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        const nextIndex = (currentSearchIndex + 1) % searchResults.length;
+        setCurrentSearchIndex(nextIndex);
+        setHighlightedLine({ line: searchResults[nextIndex].line, side: searchResults[nextIndex].side });
+      } else if (e.key === 'p' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        const prevIndex = currentSearchIndex === 0 ? searchResults.length - 1 : currentSearchIndex - 1;
+        setCurrentSearchIndex(prevIndex);
+        setHighlightedLine({ line: searchResults[prevIndex].line, side: searchResults[prevIndex].side });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [searchResults, currentSearchIndex]);
+
+  // Scroll to highlighted line
+  useEffect(() => {
+    if (highlightedLine) {
+      const element = document.getElementById(`text-diff-line-${highlightedLine.side}-${highlightedLine.line}`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlightedLine]);
+
+  // Get enhanced diff metadata
+  const structuralChangesCount = (diff as EnhancedDiffResult)?.structuralChanges?.length || 0;
+  const statistics = (diff as EnhancedDiffResult)?.statistics;
+
   const handleFormatJson = (side: 'left' | 'right') => {
     try {
       const text = side === 'left' ? leftText : rightText;
@@ -377,7 +474,7 @@ export function TextDiffChecker() {
         case 'replace-breaks':
           return text.replace(/\n/g, ' ');
         case 'trim':
-          return text.split('\n').map(line => line.trim()).join('\n');
+          return text.split('\n').map(line => line.trim().replace(/\s{2,}/g, ' ')).join('\n');
         default:
           return text;
       }
@@ -605,7 +702,7 @@ export function TextDiffChecker() {
     <>
     <div className="flex gap-3 relative">
       {/* Left Sidebar - Tools for Desktop */}
-      <div className="w-36 flex-shrink-0 hidden lg:block">
+      <div className="w-52 flex-shrink-0 hidden lg:block">
         <Card className="sticky top-24 border-0 shadow-md">
           <CardContent className="p-3 space-y-3">
             {/* Toggles */}
@@ -761,7 +858,7 @@ export function TextDiffChecker() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-8 w-8 p-0 rounded-full shadow-md bg-card hover:bg-muted"
+                  className="h-9 w-9 p-0 rounded-full shadow-md bg-card hover:bg-muted border-primary/30 hover:border-primary/50"
                   onClick={() => {
                     setLeftText(rightText);
                     setRightText(leftText);
@@ -773,7 +870,7 @@ export function TextDiffChecker() {
                   disabled={!leftText.trim() && !rightText.trim()}
                   title="Swap Text A and B"
                 >
-                  <ArrowRightLeft className="h-3.5 w-3.5" />
+                  <ArrowRightLeft className="h-4 w-4" />
                 </Button>
               </div>
               <div className="space-y-2">
@@ -979,11 +1076,11 @@ export function TextDiffChecker() {
         {/* Results Section */}
         {diff && (
           <Card className="border-0 shadow-lg overflow-hidden">
-            <CardHeader className="pb-4 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
+            <CardHeader className="pb-0 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg flex items-center gap-2">
                   <div className="p-2 rounded-lg bg-primary/10">
-                    <FileText className="h-5 w-5 text-primary" />
+                    <Code2 className="h-5 w-5 text-primary" />
                   </div>
                   Comparison Result
                   {diff.hasDifferences ? (
@@ -992,7 +1089,88 @@ export function TextDiffChecker() {
                     <Badge variant="success" className="ml-2">Identical</Badge>
                   )}
                 </CardTitle>
+                {/* Statistics Badges */}
                 <div className="flex items-center gap-2">
+                  {statistics && statistics.percentageChanged > 0 && (
+                    <Badge variant="outline" className="gap-1">
+                      <TrendingUp className="h-3 w-3" />
+                      {statistics.percentageChanged.toFixed(1)}% changed
+                    </Badge>
+                  )}
+                  {structuralChangesCount > 0 && (
+                    <Badge variant="secondary" className="gap-1">
+                      <GitBranch className="h-3 w-3" />
+                      {structuralChangesCount} moves
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {/* Toolbar */}
+              <div className="px-6 pt-4 flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  {/* Diff Options */}
+                  <DiffOptionsPanel
+                    options={diffOptions}
+                    onOptionsChange={setDiffOptions}
+                    structuralChangesCount={structuralChangesCount}
+                    contentSize={contentSize}
+                  />
+                  <DiffSearchBar onSearch={handleSearch} />
+                  {/* Path Navigation */}
+                  {isJson && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="outline" size="sm" className="gap-2">
+                          <GitBranch className="h-4 w-4" />
+                          <span className="hidden sm:inline">Go to Path</span>
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[280px]" align="end">
+                        <div className="space-y-2">
+                          <p className="text-sm text-muted-foreground">Navigate to JSON path</p>
+                          <div className="flex gap-2">
+                            <Input
+                              placeholder="$.user.name"
+                              value={pathInput}
+                              onChange={(e) => setPathInput(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && handlePathNavigation()}
+                              className="flex-1"
+                            />
+                            <Button size="sm" onClick={handlePathNavigation} disabled={!pathInput.trim()}>
+                              Go
+                            </Button>
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* View Mode Switcher */}
+                  {isJson && (
+                    <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/50">
+                      <Button
+                        variant={viewMode === 'diff' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        onClick={() => setViewMode('diff')}
+                        className="h-7 px-2 gap-1"
+                      >
+                        <Rows3 className="h-3.5 w-3.5" />
+                        <span className="text-xs">Diff</span>
+                      </Button>
+                      <Button
+                        variant={viewMode === 'foldable' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        onClick={() => setViewMode('foldable')}
+                        className="h-7 px-2 gap-1"
+                      >
+                        <FoldVertical className="h-3.5 w-3.5" />
+                        <span className="text-xs">Foldable</span>
+                      </Button>
+                    </div>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -1000,7 +1178,7 @@ export function TextDiffChecker() {
                     className="gap-2"
                   >
                     <Download className="h-4 w-4" />
-                    <span>Save Results</span>
+                    <span className="hidden sm:inline">Save</span>
                   </Button>
                   {diff.hasDifferences && (
                     <Button
@@ -1010,56 +1188,75 @@ export function TextDiffChecker() {
                       className="gap-2"
                     >
                       <GitMerge className="h-4 w-4" />
-                      <span>Merge Mode</span>
+                      <span className="hidden sm:inline">Merge</span>
                     </Button>
                   )}
                   {mergeMode && (
                     <>
                       <Badge variant="secondary">Merge Mode Active</Badge>
-                      <Button
-                        size="sm"
-                        onClick={handleFinishMerge}
-                        className="gap-1"
-                      >
+                      <Button size="sm" onClick={handleFinishMerge} className="gap-1">
                         <Copy className="h-3.5 w-3.5" />
-                        Copy Merged Result
+                        Copy Merged
                       </Button>
                     </>
                   )}
                 </div>
               </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x border-t overflow-hidden">
-                <DiffPanel
-                  title="Text A"
-                  lines={diff.left}
-                  lineCount={leftText.split('\n').length}
-                  removals={diff.removals}
-                  side="left"
-                  content={leftText}
-                  icon={Globe}
-                  accentColor="primary"
-                  isJson={isJson}
-                  onAcceptChange={handleAcceptChange}
-                  onRejectChange={handleRejectChange}
-                  showMergeControls={mergeMode}
-                />
-                <DiffPanel
-                  title="Text B"
-                  lines={diff.right}
-                  lineCount={rightText.split('\n').length}
-                  additions={diff.additions}
-                  side="right"
-                  content={rightText}
-                  icon={Server}
-                  accentColor="accent"
-                  isJson={isJson}
-                  onAcceptChange={handleAcceptChange}
-                  onRejectChange={handleRejectChange}
-                  showMergeControls={mergeMode}
-                />
-              </div>
+
+              {/* Diff Content */}
+              {viewMode === 'diff' ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x border-t mt-4 overflow-hidden">
+                  <DiffPanel
+                    title="Text A"
+                    lines={diffOptions.showOnlyDifferences ? diff.left.filter(l => l.type !== 'unchanged') : diff.left}
+                    lineCount={leftText.split('\n').length}
+                    removals={diff.removals}
+                    side="left"
+                    content={leftText}
+                    icon={Globe}
+                    accentColor="primary"
+                    isJson={isJson}
+                    onAcceptChange={handleAcceptChange}
+                    onRejectChange={handleRejectChange}
+                    showMergeControls={mergeMode}
+                  />
+                  <DiffPanel
+                    title="Text B"
+                    lines={diffOptions.showOnlyDifferences ? diff.right.filter(l => l.type !== 'unchanged') : diff.right}
+                    lineCount={rightText.split('\n').length}
+                    additions={diff.additions}
+                    side="right"
+                    content={rightText}
+                    icon={Server}
+                    accentColor="accent"
+                    isJson={isJson}
+                    onAcceptChange={handleAcceptChange}
+                    onRejectChange={handleRejectChange}
+                    showMergeControls={mergeMode}
+                  />
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 divide-x border-t mt-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 p-3 border-b bg-gradient-to-r from-primary/10 to-card">
+                      <div className="p-1.5 rounded-lg bg-primary/10">
+                        <Globe className="h-4 w-4 text-primary" />
+                      </div>
+                      <span className="font-semibold text-sm">Text A</span>
+                    </div>
+                    <FoldableJson content={isJson ? formatJson(leftText) : leftText} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 p-3 border-b bg-gradient-to-r from-accent/10 to-card">
+                      <div className="p-1.5 rounded-lg bg-accent/10">
+                        <Server className="h-4 w-4 text-accent" />
+                      </div>
+                      <span className="font-semibold text-sm">Text B</span>
+                    </div>
+                    <FoldableJson content={isJson ? formatJson(rightText) : rightText} />
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
