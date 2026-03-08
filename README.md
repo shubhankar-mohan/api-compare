@@ -4,6 +4,11 @@
 
 DiffChecker is a powerful offline comparison tool that helps developers compare API responses and text content. Built with privacy in mind, all comparisons happen locally in your browser - your data never leaves your machine.
 
+<p>
+  <img src="docs/images/api-compare-input.png" width="49%" alt="API Compare - Input & Summary" />
+  <img src="docs/images/api-compare-diff.png" width="49%" alt="API Compare - Diff View" />
+</p>
+
 ### Key Features
 
 - **Dual Comparison Modes**: 
