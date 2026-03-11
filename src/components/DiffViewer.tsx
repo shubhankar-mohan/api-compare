@@ -45,7 +45,7 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
           return (
             <span 
               key={idx} 
-              className="bg-red-500/30 text-red-600 dark:bg-red-500/20 dark:text-red-400 px-0.5 rounded-sm font-semibold"
+              className="bg-red-200 dark:bg-red-900/40 text-red-800 dark:text-red-200"
             >
               {seg.text}
             </span>
@@ -55,7 +55,7 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
           return (
             <span 
               key={idx} 
-              className="bg-green-500/30 text-green-600 dark:bg-green-500/20 dark:text-green-400 px-0.5 rounded-sm font-semibold"
+              className="bg-green-200 dark:bg-green-900/40 text-green-800 dark:text-green-200"
             >
               {seg.text}
             </span>
@@ -211,20 +211,12 @@ function DiffPanel({
         {displayLines.map((line, idx) => {
           const originalIndex = lines.indexOf(line);
           const isHighlighted = highlightedLine?.side === side && highlightedLine?.line === originalIndex;
-          
-          // Scroll to highlighted line
-          if (isHighlighted) {
-            setTimeout(() => {
-              const element = document.getElementById(`diff-line-${side}-${originalIndex}`);
-              element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }, 100);
-          }
-          
+
           return (
-            <DiffLineComponent 
-              key={idx} 
-              line={line} 
-              side={side} 
+            <DiffLineComponent
+              key={idx}
+              line={line}
+              side={side}
               isJson={isJson}
               isHighlighted={isHighlighted}
               lineIndex={originalIndex}
@@ -351,6 +343,14 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [searchResults, currentSearchIndex]);
 
+  // Scroll to highlighted line when it changes
+  useEffect(() => {
+    if (highlightedLine) {
+      const element = document.getElementById(`diff-line-${highlightedLine.side}-${highlightedLine.line}`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlightedLine]);
+
   const isJsonResponse = useMemo(() => {
     try {
       JSON.parse(original.body);
@@ -371,91 +371,90 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
       <CardHeader className="pb-0 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg flex items-center gap-2">
-            <div className="p-2 rounded-lg bg-primary/10">
+            <div className="p-2 rounded-xl bg-primary/20 shadow-sm">
               <Code2 className="h-5 w-5 text-primary" />
             </div>
             Response Comparison
           </CardTitle>
-          
+
           {/* Statistics Badge */}
-          {statistics && (
-            <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
+            {statistics && statistics.percentageChanged > 0 && (
               <Badge variant="outline" className="gap-1">
                 <TrendingUp className="h-3 w-3" />
                 {statistics.percentageChanged.toFixed(1)}% changed
               </Badge>
-              {structuralChangesCount > 0 && (
-                <Badge variant="secondary" className="gap-1">
-                  <GitBranch className="h-3 w-3" />
-                  {structuralChangesCount} moves
-                </Badge>
-              )}
-            </div>
-          )}
+            )}
+            {structuralChangesCount > 0 && (
+              <Badge variant="secondary" className="gap-1">
+                <GitBranch className="h-3 w-3" />
+                {structuralChangesCount} moves
+              </Badge>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="p-0">
         <Tabs defaultValue="body" className="flex flex-col">
-          <div className="px-6 pt-4 flex items-center justify-between">
+          {/* Toolbar */}
+          <div className="px-6 pt-4 flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <TabsList className="bg-muted/50 p-1">
-                <TabsTrigger value="body" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
+                <TabsTrigger value="body" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm text-sm">
                   Response Body
                   {bodyDiff.hasDifferences && (
                     <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="headers" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm">
+                <TabsTrigger value="headers" className="gap-2 data-[state=active]:bg-card data-[state=active]:shadow-sm text-sm">
                   Headers
                   {headersDiff.hasDifferences && (
                     <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
                   )}
                 </TabsTrigger>
               </TabsList>
-              
+
               {/* Diff Options and Search */}
-              <div className="flex items-center gap-2">
-                <DiffOptionsPanel 
-                  options={diffOptions}
-                  onOptionsChange={setDiffOptions}
-                  structuralChangesCount={structuralChangesCount}
-                  contentSize={contentSize}
-                />
-                <DiffSearchBar onSearch={handleSearch} />
-                
-                {/* Path Navigation */}
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-2">
-                      <GitBranch className="h-4 w-4" />
-                      <span className="hidden sm:inline">Go to Path</span>
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[280px]" align="end">
-                    <div className="space-y-2">
-                      <p className="text-sm text-muted-foreground">
-                        Navigate to JSON path
-                      </p>
-                      <div className="flex gap-2">
-                        <Input
-                          placeholder="$.user.name"
-                          value={pathInput}
-                          onChange={(e) => setPathInput(e.target.value)}
-                          onKeyPress={(e) => e.key === 'Enter' && handlePathNavigation()}
-                          className="flex-1"
-                        />
-                        <Button
-                          size="sm"
-                          onClick={handlePathNavigation}
-                          disabled={!pathInput.trim()}
-                        >
-                          Go
-                        </Button>
-                      </div>
+              <DiffOptionsPanel
+                options={diffOptions}
+                onOptionsChange={setDiffOptions}
+                structuralChangesCount={structuralChangesCount}
+                contentSize={contentSize}
+              />
+              <DiffSearchBar onSearch={handleSearch} />
+
+              {/* Path Navigation */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2">
+                    <GitBranch className="h-4 w-4" />
+                    <span className="hidden sm:inline">Go to Path</span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[280px]" align="end">
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      Navigate to JSON path
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="$.user.name"
+                        value={pathInput}
+                        onChange={(e) => setPathInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handlePathNavigation()}
+                        className="flex-1"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={handlePathNavigation}
+                        disabled={!pathInput.trim()}
+                      >
+                        Go
+                      </Button>
                     </div>
-                  </PopoverContent>
-                </Popover>
-              </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="flex items-center gap-2">
               {isJsonResponse && (

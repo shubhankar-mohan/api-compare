@@ -1,3 +1,6 @@
+import { detectFieldType } from './smartComparison';
+import { computeStructuralDiff } from './structuralDiff';
+
 export type DiffLineType = 'added' | 'removed' | 'unchanged' | 'empty' | 'modified';
 
 export interface DiffSegment {
@@ -20,10 +23,22 @@ export interface DiffResult {
   hasDifferences: boolean;
 }
 
+// Maximum number of lines for full LCS (O(m*n) memory/time)
+// Beyond this, fall back to a simpler diff to avoid page crashes
+const LCS_MAX_LINES = 1500;
+
 // Longest Common Subsequence algorithm for optimal diff
 function lcs<T>(a: T[], b: T[]): number[][] {
   const m = a.length;
   const n = b.length;
+
+  // Guard: if inputs are too large, the O(m*n) table will crash the browser
+  if (m > LCS_MAX_LINES || n > LCS_MAX_LINES) {
+    // Return a dummy DP table that forces simple line-by-line comparison
+    // (all zeros means no common subsequence found → every line is a diff)
+    return Array(m + 1).fill(null).map(() => [0]);
+  }
+
   const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
 
   for (let i = 1; i <= m; i++) {
@@ -47,8 +62,10 @@ function calculateSimilarity(str1: string, str2: string): number {
   if (str1 === str2) return 1;
   if (!str1 || !str2) return 0;
   
-  // Create cache key based on string characteristics
-  const cacheKey = `${str1.length}:${str2.length}:${str1.substring(0, 20)}:${str2.substring(0, 20)}`;
+  // Create cache key - use full content hash for short strings, sampled for long strings
+  const sample1 = str1.length <= 100 ? str1 : `${str1.length}:${str1.substring(0, 50)}:${str1.substring(str1.length - 50)}`;
+  const sample2 = str2.length <= 100 ? str2 : `${str2.length}:${str2.substring(0, 50)}:${str2.substring(str2.length - 50)}`;
+  const cacheKey = `${sample1}|||${sample2}`;
   
   // Check cache first
   if (similarityCache.has(cacheKey)) {
@@ -65,9 +82,11 @@ function calculateSimilarity(str1: string, str2: string): number {
   
   // Cache the result (limit cache size to prevent memory issues)
   if (similarityCache.size > 1000) {
-    // Clear oldest entries
-    const firstKey = similarityCache.keys().next().value;
-    similarityCache.delete(firstKey);
+    // Clear half the cache to avoid frequent single-item evictions
+    const keys = Array.from(similarityCache.keys());
+    for (let k = 0; k < 500; k++) {
+      similarityCache.delete(keys[k]);
+    }
   }
   similarityCache.set(cacheKey, similarity);
   
@@ -76,31 +95,35 @@ function calculateSimilarity(str1: string, str2: string): number {
 
 // Levenshtein distance for string similarity
 function levenshteinDistance(str1: string, str2: string): number {
-  const matrix: number[][] = [];
-  
-  for (let i = 0; i <= str2.length; i++) {
-    matrix[i] = [i];
-  }
-  
-  for (let j = 0; j <= str1.length; j++) {
-    matrix[0][j] = j;
-  }
-  
-  for (let i = 1; i <= str2.length; i++) {
-    for (let j = 1; j <= str1.length; j++) {
-      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
+  // Cap input length to avoid massive O(n*m) allocation
+  const MAX_LEN = 300;
+  const s1 = str1.length > MAX_LEN ? str1.substring(0, MAX_LEN) : str1;
+  const s2 = str2.length > MAX_LEN ? str2.substring(0, MAX_LEN) : str2;
+
+  // Use single-row optimization: O(min(m,n)) space instead of O(m*n)
+  const a = s1.length > s2.length ? s2 : s1;
+  const b = s1.length > s2.length ? s1 : s2;
+  const aLen = a.length;
+  const bLen = b.length;
+
+  let prev = new Array(aLen + 1);
+  let curr = new Array(aLen + 1);
+
+  for (let j = 0; j <= aLen; j++) prev[j] = j;
+
+  for (let i = 1; i <= bLen; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= aLen; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        curr[j] = prev[j - 1];
       } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
+        curr[j] = Math.min(prev[j - 1] + 1, curr[j - 1] + 1, prev[j] + 1);
       }
     }
+    [prev, curr] = [curr, prev];
   }
-  
-  return matrix[str2.length][str1.length];
+
+  return prev[aLen];
 }
 
 // Compute character-level diff for more precise highlighting
@@ -251,8 +274,13 @@ function computeWordDiff(leftLine: string, rightLine: string): { leftSegments: D
   };
 }
 
-// Simple diff for very small texts
-function computeSimpleDiff(leftLines: string[], rightLines: string[]): DiffResult {
+// Simple diff for very small texts with normalization
+function computeSimpleDiffWithNormalization(
+  leftLines: string[], 
+  rightLines: string[],
+  leftNormalized: string[],
+  rightNormalized: string[]
+): DiffResult {
   const left: DiffLine[] = [];
   const right: DiffLine[] = [];
   let additions = 0;
@@ -262,7 +290,8 @@ function computeSimpleDiff(leftLines: string[], rightLines: string[]): DiffResul
   
   for (let i = 0; i < maxLength; i++) {
     if (i < leftLines.length && i < rightLines.length) {
-      if (leftLines[i] === rightLines[i]) {
+      // Compare normalized versions
+      if (leftNormalized[i] === rightNormalized[i]) {
         left.push({ content: leftLines[i], type: 'unchanged', lineNumber: i + 1 });
         right.push({ content: rightLines[i], type: 'unchanged', lineNumber: i + 1 });
       } else {
@@ -291,9 +320,99 @@ function computeSimpleDiff(leftLines: string[], rightLines: string[]): DiffResul
   };
 }
 
-export function computeDiff(leftText: string, rightText: string, options?: { advancedMode?: boolean }): DiffResult {
-  // Early exit for identical content
-  if (leftText === rightText) {
+// Configuration for comprehensive comparison
+export interface ComparisonConfig {
+  ignoreWhitespace?: boolean;
+  ignoreTrailingWhitespace?: boolean;
+  ignoreLineEndings?: boolean;
+  ignoreInvisibleCharacters?: boolean;
+  normalizeIndentation?: boolean;
+  tabSize?: number;
+  formatType?: 'json' | 'yaml' | 'xml' | 'text' | 'config';
+}
+
+// Normalize line for comparison
+function normalizeLine(line: string, config?: ComparisonConfig): string {
+  let normalized = line;
+  
+  // First, normalize line endings (do this first!)
+  normalized = normalized
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n/g, ''); // Remove any line endings within the line
+  
+  // Remove ALL invisible and problematic Unicode characters
+  normalized = normalized
+    .replace(/[\u0000-\u001F]/g, '') // Control characters
+    .replace(/[\u007F-\u009F]/g, '') // Delete and C1 control codes  
+    .replace(/\u200B/g, '')  // Zero-width space
+    .replace(/\u200C/g, '')  // Zero-width non-joiner
+    .replace(/\u200D/g, '')  // Zero-width joiner
+    .replace(/\uFEFF/g, '')  // BOM
+    .replace(/\u00A0/g, ' ') // Non-breaking space
+    .replace(/[\u2000-\u200A]/g, ' ') // Various Unicode spaces
+    .replace(/\u202F/g, ' ') // Narrow no-break space
+    .replace(/\u3000/g, ' ') // Ideographic space
+    .replace(/[\uE000-\uF8FF]/g, ''); // Private use area
+  
+  // Convert ALL tabs to spaces consistently
+  normalized = normalized.replace(/\t/g, '  ');
+  
+  // Handle leading whitespace/indentation
+  if (config?.normalizeIndentation !== false || config?.formatType === 'yaml') {
+    // For YAML and config files, normalize indentation more aggressively
+    const match = normalized.match(/^(\s*)(.*)/);
+    if (match) {
+      const [, indent, content] = match;
+      // Count the indent level (treat any 2-5 space group as one indent level)
+      const indentLevel = Math.round(indent.length / 2);
+      const normalizedIndent = '  '.repeat(indentLevel);
+      normalized = normalizedIndent + content;
+    }
+  }
+  
+  // Trim trailing whitespace (almost always want this)
+  normalized = normalized.trimEnd();
+  
+  // Additional whitespace handling
+  if (config?.ignoreWhitespace) {
+    // Complete whitespace normalization
+    normalized = normalized.replace(/\s+/g, ' ').trim();
+  }
+  
+  // For YAML files, also normalize quote styles around values
+  if (config?.formatType === 'yaml') {
+    // Remove quotes around simple values that don't need them
+    normalized = normalized.replace(/:\s*["']([^"']*?)["']\s*$/g, ': $1');
+    // Normalize spacing around colons
+    normalized = normalized.replace(/\s*:\s*/g, ': ');
+  }
+  
+  return normalized;
+}
+
+export function computeDiff(leftText: string, rightText: string, options?: { advancedMode?: boolean; config?: ComparisonConfig }): DiffResult {
+  const config = options?.config || {};
+  
+  // Check if this is JSON content
+  const isJson = isJsonContent(leftText) && isJsonContent(rightText);
+  
+  // For JSON content, use structural diff with smart field detection
+  if (isJson) {
+    return computeSmartJsonDiff(leftText, rightText, config);
+  }
+  
+  // For YAML/config files, use structural diff
+  if (config?.formatType === 'yaml' || config?.formatType === 'config') {
+    return computeStructuralDiff(leftText, rightText, config);
+  }
+  
+  // Normalize texts for comparison
+  const leftNormalized = normalizeLine(leftText, config);
+  const rightNormalized = normalizeLine(rightText, config);
+  
+  // Early exit for identical content after normalization
+  if (leftNormalized === rightNormalized) {
     const lines = leftText.split('\n');
     const unchangedLines: DiffLine[] = lines.map((line, i) => ({
       content: line,
@@ -311,24 +430,37 @@ export function computeDiff(leftText: string, rightText: string, options?: { adv
   
   const leftLines = leftText.split('\n');
   const rightLines = rightText.split('\n');
-  
+
+  // Create normalized versions for comparison
+  const leftNormalizedLines = leftLines.map(line => normalizeLine(line, config));
+  const rightNormalizedLines = rightLines.map(line => normalizeLine(line, config));
+
+  // For very large texts, use simple line-by-line diff to avoid O(m*n) crash
+  if (leftLines.length > LCS_MAX_LINES || rightLines.length > LCS_MAX_LINES) {
+    return computeSimpleDiffWithNormalization(leftLines, rightLines, leftNormalizedLines, rightNormalizedLines);
+  }
+
   // Use simple diff for very small texts - but check if lines are similar first
   if (leftLines.length < 10 && rightLines.length < 10) {
     // Check if we should use advanced diff even for small texts
     let shouldUseAdvanced = false;
     for (let i = 0; i < Math.min(leftLines.length, rightLines.length); i++) {
-      if (leftLines[i] !== rightLines[i] && calculateSimilarity(leftLines[i], rightLines[i]) > 0.2) {
+      // Compare normalized versions
+      if (leftNormalizedLines[i] !== rightNormalizedLines[i] && 
+          calculateSimilarity(leftNormalizedLines[i], rightNormalizedLines[i]) > 0.2) {
         shouldUseAdvanced = true;
         break;
       }
     }
     
     if (!shouldUseAdvanced) {
-      return computeSimpleDiff(leftLines, rightLines);
+      // Use normalized lines for simple diff comparison
+      return computeSimpleDiffWithNormalization(leftLines, rightLines, leftNormalizedLines, rightNormalizedLines);
     }
   }
 
-  const dp = lcs(leftLines, rightLines);
+  // Use normalized lines for LCS computation
+  const dp = lcs(leftNormalizedLines, rightNormalizedLines);
   
   const left: DiffLine[] = [];
   const right: DiffLine[] = [];
@@ -344,8 +476,9 @@ export function computeDiff(leftText: string, rightText: string, options?: { adv
 
   // Backtrack through LCS to build diff
   while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && leftLines[i - 1] === rightLines[j - 1]) {
-      // Lines match exactly
+    // Compare normalized versions but display original
+    if (i > 0 && j > 0 && leftNormalizedLines[i - 1] === rightNormalizedLines[j - 1]) {
+      // Lines match exactly after normalization
       tempLeft.unshift({
         content: leftLines[i - 1],
         type: 'unchanged',
@@ -362,13 +495,16 @@ export function computeDiff(leftText: string, rightText: string, options?: { adv
       // Check if lines are similar enough to pair for inline diff
       const leftLine = leftLines[i - 1];
       const rightLine = rightLines[j - 1];
+      const leftNormalized = leftNormalizedLines[i - 1];
+      const rightNormalized = rightNormalizedLines[j - 1];
       
       // Skip similarity calculation for very long lines or when advanced mode is disabled
       let similarity = 0;
       const useAdvanced = options?.advancedMode !== false;
       
-      if (useAdvanced && leftLine.length < 1000 && rightLine.length < 1000) {
-        similarity = calculateSimilarity(leftLine, rightLine);
+      // Use normalized lines for similarity calculation
+      if (useAdvanced && leftNormalized.length < 1000 && rightNormalized.length < 1000) {
+        similarity = calculateSimilarity(leftNormalized, rightNormalized);
       }
       
       // Lower threshold to 20% to catch more similar lines
@@ -385,7 +521,8 @@ export function computeDiff(leftText: string, rightText: string, options?: { adv
         let rightSegments: DiffSegment[] | undefined;
         
         if (useAdvanced) {
-          const result = computeWordDiff(leftLines[i - 1], rightLines[j - 1]);
+          // Use normalized lines for word diff to avoid false positives
+          const result = computeWordDiff(leftNormalized, rightNormalized);
           leftSegments = result.leftSegments;
           rightSegments = result.rightSegments;
         }
@@ -542,4 +679,65 @@ export function formatHeaders(headers: Record<string, string>): string {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}: ${value}`)
     .join('\n');
+}
+
+// Check if content is JSON
+function isJsonContent(text: string): boolean {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Smart JSON diff that understands field types
+function computeSmartJsonDiff(leftText: string, rightText: string, config?: ComparisonConfig): DiffResult {
+  try {
+    const leftJson = JSON.parse(leftText);
+    const rightJson = JSON.parse(rightText);
+    
+    // Format both JSONs
+    const leftFormatted = JSON.stringify(leftJson, null, 2);
+    const rightFormatted = JSON.stringify(rightJson, null, 2);
+    
+    // Preprocess to mark timestamp/ID fields
+    const leftProcessed = preprocessJsonForComparison(leftFormatted);
+    const rightProcessed = preprocessJsonForComparison(rightFormatted);
+    
+    // Use structural diff for better alignment
+    return computeStructuralDiff(leftProcessed, rightProcessed, config);
+  } catch {
+    // Fall back to text diff if JSON parsing fails
+    return computeStructuralDiff(leftText, rightText, config);
+  }
+}
+
+// Preprocess JSON to normalize timestamps and IDs
+function preprocessJsonForComparison(jsonText: string): string {
+  const lines = jsonText.split('\n');
+  return lines.map(line => {
+    // Check if line contains a field that looks like timestamp or ID
+    const fieldMatch = line.match(/^(\s*)"([^"]+)"\s*:\s*(.+)/);
+    if (fieldMatch) {
+      const [, indent, key, value] = fieldMatch;
+      const fieldType = detectFieldType(key, value);
+      
+      if (fieldType === 'timestamp') {
+        // Check if values are actually different timestamps
+        const timestampPattern = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}|\d{10,13}/;
+        if (timestampPattern.test(value)) {
+          // Mark timestamp fields to be treated specially
+          return `${indent}"${key}": ${value} /* TIMESTAMP */`;
+        }
+      } else if (fieldType === 'id') {
+        // Mark ID fields
+        const idPattern = /"[0-9a-f-]+"|"(usr_|sess_|prod_|req_)[^"]+"/;
+        if (idPattern.test(value)) {
+          return `${indent}"${key}": ${value} /* ID */`;
+        }
+      }
+    }
+    return line;
+  }).join('\n');
 }

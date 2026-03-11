@@ -8,23 +8,6 @@ export interface CurlHistoryItem {
   command: string;
   localhostUrl: string;
   timestamp: number;
-  label: string;
-}
-
-function extractPathFromCurl(command: string): string {
-  // Extract URL from curl command
-  const urlMatch = command.match(/['"]?(https?:\/\/[^\s'"]+)['"]?/);
-  if (!urlMatch) return 'Unknown';
-  
-  try {
-    const url = new URL(urlMatch[1]);
-    const path = url.pathname + url.search;
-    // Clean up and truncate
-    const cleanPath = path === '/' ? url.hostname.split('.')[0] : path;
-    return cleanPath.length > 30 ? cleanPath.substring(0, 30) + '...' : cleanPath;
-  } catch {
-    return 'Unknown';
-  }
 }
 
 export function useCurlHistory() {
@@ -47,23 +30,10 @@ export function useCurlHistory() {
       command,
       localhostUrl,
       timestamp: Date.now(),
-      label: extractPathFromCurl(command),
     };
 
     setHistory(prev => {
-      // Check if command already exists
-      const exists = prev.find(item => item.command === command);
-      let updated: CurlHistoryItem[];
-      
-      if (exists) {
-        // Move to top and update timestamp
-        updated = [
-          { ...exists, timestamp: Date.now(), localhostUrl },
-          ...prev.filter(item => item.command !== command)
-        ];
-      } else {
-        updated = [newItem, ...prev].slice(0, MAX_HISTORY);
-      }
+      const updated = [newItem, ...prev].slice(0, MAX_HISTORY);
       
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
       return updated;

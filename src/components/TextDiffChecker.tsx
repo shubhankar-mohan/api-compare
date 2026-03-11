@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -6,19 +6,36 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
-import { 
+import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
   ArrowRightLeft, FileText, Copy, Trash2, Minus, Plus, Globe, Server,
   Wand2, CaseLower, SortAsc, WrapText, Scissors, RotateCcw, Settings,
-  ChevronLeft, ChevronRight, GitMerge
+  ChevronLeft, ChevronRight, GitMerge, Upload, Download, Search, Replace,
+  Rows3, FoldVertical, GitBranch, TrendingUp, Code2
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import { computeDiff, formatJson, DiffLine, DiffSegment } from '@/lib/diffAlgorithm';
+import { computeDiff, formatJson, DiffLine, DiffSegment, ComparisonConfig } from '@/lib/diffAlgorithm';
+import { computeStructuralDiff } from '@/lib/structuralDiff';
+import {
+  computeEnhancedDiff,
+  DiffOptions,
+  EnhancedDiffResult,
+  searchInDiff,
+  navigateToPath
+} from '@/lib/enhancedDiffAlgorithm';
 import { cn } from '@/lib/utils';
 import { JsonSyntaxHighlight } from './JsonSyntaxHighlight';
+import { FoldableJson } from './FoldableJson';
 import { MergeView } from './MergeView';
+import { DiffOptionsPanel, DiffSearchBar } from './DiffOptions';
 import {
   Dialog,
   DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
 } from '@/components/ui/dialog';
 
 function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'left' | 'right' }) {
@@ -33,7 +50,7 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
           return (
             <span 
               key={idx} 
-              className="bg-[hsl(var(--diff-removed))/0.3] text-[hsl(var(--diff-removed))] rounded-sm"
+              className="bg-red-200 dark:bg-red-900/40 text-red-800 dark:text-red-200"
             >
               {seg.text}
             </span>
@@ -43,7 +60,7 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
           return (
             <span 
               key={idx} 
-              className="bg-[hsl(var(--diff-added))/0.3] text-[hsl(var(--diff-added))] rounded-sm"
+              className="bg-green-200 dark:bg-green-900/40 text-green-800 dark:text-green-200"
             >
               {seg.text}
             </span>
@@ -75,7 +92,7 @@ function DiffLineComponent({
   const bgClass = {
     added: 'bg-[hsl(var(--diff-added-bg))]',
     removed: 'bg-[hsl(var(--diff-removed-bg))]',
-    modified: 'bg-yellow-50 dark:bg-yellow-900/10',  // Yellow/amber background for modified lines
+    modified: 'bg-yellow-100 dark:bg-yellow-900/20',  // More visible yellow background for modified lines
     unchanged: '',
     empty: 'bg-muted/30',
   }[line.type];
@@ -246,14 +263,14 @@ function ToolButton({ icon: Icon, label, onClick, disabled }: ToolButtonProps) {
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "flex items-center gap-1.5 w-full px-2 py-1.5 text-xs text-left rounded-lg transition-colors",
+        "flex items-center gap-2 w-full px-2.5 py-2 text-xs text-left rounded-xl transition-colors",
         "hover:bg-muted text-foreground",
         disabled && "opacity-50 cursor-not-allowed"
       )}
       title={label}
     >
       <Icon className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-      <span className="truncate">{label}</span>
+      <span>{label}</span>
     </button>
   );
 }
@@ -261,6 +278,8 @@ function ToolButton({ icon: Icon, label, onClick, disabled }: ToolButtonProps) {
 export function TextDiffChecker() {
   const [leftText, setLeftText] = useState('');
   const [rightText, setRightText] = useState('');
+  const [leftFileName, setLeftFileName] = useState<string>('');
+  const [rightFileName, setRightFileName] = useState<string>('');
   const [hasCompared, setHasCompared] = useState(false);
   const [realTimeDiff, setRealTimeDiff] = useState(false);
   const [showMobileTools, setShowMobileTools] = useState(false);
@@ -268,6 +287,16 @@ export function TextDiffChecker() {
   const [mergedText, setMergedText] = useState('');
   const [acceptedChanges, setAcceptedChanges] = useState<Set<string>>(new Set());
   const [showMergeDialog, setShowMergeDialog] = useState(false);
+  const [showFindReplaceDialog, setShowFindReplaceDialog] = useState(false);
+  const [findText, setFindText] = useState('');
+  const [replaceText, setReplaceText] = useState('');
+  const [replaceTarget, setReplaceTarget] = useState<'left' | 'right' | 'both'>('both');
+  const [viewMode, setViewMode] = useState<'diff' | 'foldable' | 'merge'>('diff');
+  const [diffOptions, setDiffOptions] = useState<DiffOptions>({});
+  const [searchResults, setSearchResults] = useState<ReturnType<typeof searchInDiff>>([]);
+  const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
+  const [pathInput, setPathInput] = useState('');
+  const [highlightedLine, setHighlightedLine] = useState<{ line: number; side: 'left' | 'right' } | null>(null);
 
   const isJson = useMemo(() => {
     try {
@@ -282,12 +311,57 @@ export function TextDiffChecker() {
 
   const shouldShowDiff = realTimeDiff || hasCompared;
 
+  // Calculate content size for advanced mode auto-detection
+  const contentSize = useMemo(() => {
+    const leftLines = leftText.split('\n').length;
+    const rightLines = rightText.split('\n').length;
+    return Math.max(leftLines, rightLines);
+  }, [leftText, rightText]);
+
   const diff = useMemo(() => {
     if (!shouldShowDiff) return null;
     const left = isJson ? formatJson(leftText) : leftText;
     const right = isJson ? formatJson(rightText) : rightText;
-    return computeDiff(left, right);
-  }, [leftText, rightText, shouldShowDiff, isJson]);
+
+    // Detect file type and apply appropriate config
+    let formatType: 'json' | 'yaml' | 'text' = 'text';
+    if (isJson) {
+      formatType = 'json';
+    } else if (leftFileName?.endsWith('.yml') || leftFileName?.endsWith('.yaml') ||
+               rightFileName?.endsWith('.yml') || rightFileName?.endsWith('.yaml') ||
+               leftText.includes('services:') || leftText.includes('version:')) {
+      formatType = 'yaml';
+    }
+
+    const config: ComparisonConfig = {
+      ignoreTrailingWhitespace: true,
+      ignoreLineEndings: true,
+      ignoreInvisibleCharacters: true,
+      normalizeIndentation: formatType === 'yaml',
+      tabSize: 2,
+      formatType: formatType as any
+    };
+
+    // Check if any enhanced options are enabled
+    const hasOptions = diffOptions.semanticComparison ||
+                      diffOptions.ignoreCase ||
+                      diffOptions.ignoreWhitespace ||
+                      diffOptions.detectArrayMoves ||
+                      (diffOptions.ignoreKeys && diffOptions.ignoreKeys.length > 0) ||
+                      (diffOptions.ignorePaths && diffOptions.ignorePaths.length > 0);
+
+    // Use enhanced diff when options are set
+    if (hasOptions || diffOptions.advancedMode !== false) {
+      return computeEnhancedDiff(left, right, diffOptions) as EnhancedDiffResult;
+    }
+
+    // Use structural diff for YAML files to handle missing fields better
+    if (formatType === 'yaml') {
+      return computeStructuralDiff(left, right, config);
+    }
+
+    return computeDiff(left, right, { advancedMode: true, config });
+  }, [leftText, rightText, shouldShowDiff, isJson, leftFileName, rightFileName, diffOptions]);
 
   const handleCompare = () => {
     if (!leftText.trim() && !rightText.trim()) {
@@ -295,27 +369,88 @@ export function TextDiffChecker() {
       return;
     }
     setHasCompared(true);
-    
-    // Calculate the difference count based on the current diff
-    const currentDiff = computeDiff(leftText, rightText, { advancedMode: true });
-    const diffCount = currentDiff.additions + currentDiff.removals;
-    
-    toast({ 
-      title: 'Comparison complete', 
-      description: currentDiff.hasDifferences 
-        ? `${diffCount} difference${diffCount === 1 ? '' : 's'} found` 
-        : 'Texts are identical'
-    });
+
+    // Use the memoized diff result after state update triggers recompute
+    // We schedule the toast for after the next render when diff is available
+    setTimeout(() => {
+      const left = isJson ? formatJson(leftText) : leftText;
+      const right = isJson ? formatJson(rightText) : rightText;
+      const hasDiff = left !== right;
+      toast({
+        title: 'Comparison complete',
+        description: hasDiff ? 'Differences found' : 'Texts are identical'
+      });
+    }, 0);
   };
 
   const handleClear = () => {
     setLeftText('');
     setRightText('');
+    setLeftFileName('');
+    setRightFileName('');
     setHasCompared(false);
     setMergeMode(false);
     setMergedText('');
     setAcceptedChanges(new Set());
   };
+
+  // Handle search in diff
+  const handleSearch = (query: string, options: { caseSensitive?: boolean; regex?: boolean }) => {
+    if (!diff) return;
+    const results = searchInDiff(diff as EnhancedDiffResult, query, options);
+    setSearchResults(results);
+    setCurrentSearchIndex(0);
+    if (results.length > 0) {
+      setHighlightedLine({ line: results[0].line, side: results[0].side });
+      toast({ title: `Found ${results.length} match${results.length !== 1 ? 'es' : ''}`, description: 'Use Cmd/Ctrl+N/P to navigate' });
+    } else {
+      toast({ title: 'No matches found', variant: 'destructive' });
+    }
+  };
+
+  // Handle path navigation
+  const handlePathNavigation = () => {
+    if (!pathInput.trim() || !diff) return;
+    const result = navigateToPath(diff as EnhancedDiffResult, pathInput);
+    if (result) {
+      setHighlightedLine(result);
+      toast({ title: 'Path found', description: `Navigated to ${pathInput}` });
+    } else {
+      toast({ title: 'Path not found', description: `Could not find ${pathInput}`, variant: 'destructive' });
+    }
+  };
+
+  // Keyboard navigation for search results
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (searchResults.length === 0) return;
+      if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        const nextIndex = (currentSearchIndex + 1) % searchResults.length;
+        setCurrentSearchIndex(nextIndex);
+        setHighlightedLine({ line: searchResults[nextIndex].line, side: searchResults[nextIndex].side });
+      } else if (e.key === 'p' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        const prevIndex = currentSearchIndex === 0 ? searchResults.length - 1 : currentSearchIndex - 1;
+        setCurrentSearchIndex(prevIndex);
+        setHighlightedLine({ line: searchResults[prevIndex].line, side: searchResults[prevIndex].side });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [searchResults, currentSearchIndex]);
+
+  // Scroll to highlighted line
+  useEffect(() => {
+    if (highlightedLine) {
+      const element = document.getElementById(`text-diff-line-${highlightedLine.side}-${highlightedLine.line}`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlightedLine]);
+
+  // Get enhanced diff metadata
+  const structuralChangesCount = (diff as EnhancedDiffResult)?.structuralChanges?.length || 0;
+  const statistics = (diff as EnhancedDiffResult)?.statistics;
 
   const handleFormatJson = (side: 'left' | 'right') => {
     try {
@@ -339,7 +474,7 @@ export function TextDiffChecker() {
         case 'replace-breaks':
           return text.replace(/\n/g, ' ');
         case 'trim':
-          return text.split('\n').map(line => line.trim()).join('\n');
+          return text.split('\n').map(line => line.trim().replace(/\s{2,}/g, ' ')).join('\n');
         default:
           return text;
       }
@@ -430,11 +565,144 @@ export function TextDiffChecker() {
     });
   };
 
+  const handleFileUpload = (side: 'left' | 'right') => (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (side === 'left') {
+        setLeftText(content);
+        setLeftFileName(file.name);
+      } else {
+        setRightText(content);
+        setRightFileName(file.name);
+      }
+      if (!realTimeDiff) setHasCompared(false);
+      toast({
+        title: 'File loaded!',
+        description: `${file.name} has been loaded successfully`,
+      });
+    };
+    reader.onerror = () => {
+      toast({
+        title: 'Error loading file',
+        description: 'Failed to read the selected file',
+        variant: 'destructive'
+      });
+    };
+    reader.readAsText(file);
+  };
+
+  const handleSaveResults = () => {
+    if (!diff) return;
+
+    const results = {
+      comparison: {
+        hasDifferences: diff.hasDifferences,
+        additions: diff.additions,
+        removals: diff.removals,
+        leftFile: leftFileName || 'Text A',
+        rightFile: rightFileName || 'Text B',
+        timestamp: new Date().toISOString()
+      },
+      leftContent: leftText,
+      rightContent: rightText,
+      ...(mergeMode && mergedText && { mergedContent: mergedText })
+    };
+
+    const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `diff-comparison-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toast({
+      title: 'Results saved!',
+      description: 'Comparison results have been downloaded as a JSON file',
+    });
+  };
+
+  // Helper function to convert escape sequences to actual characters
+  const unescapeString = (str: string): string => {
+    return str
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t')
+      .replace(/\\b/g, '\b')
+      .replace(/\\f/g, '\f')
+      .replace(/\\v/g, '\v')
+      .replace(/\\0/g, '\0')
+      .replace(/\\\\/g, '\\'); // Handle escaped backslashes
+  };
+
+  const handleFindReplace = () => {
+    if (!findText) {
+      toast({
+        title: 'Find text required',
+        description: 'Please enter text to find',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    // Convert escape sequences to actual characters
+    const findPattern = unescapeString(findText);
+    const replaceWith = unescapeString(replaceText);
+
+    let replacements = 0;
+
+    if (replaceTarget === 'left' || replaceTarget === 'both') {
+      if (leftText.includes(findPattern)) {
+        const newText = leftText.replaceAll(findPattern, replaceWith);
+        setLeftText(newText);
+        // Count occurrences of the actual pattern
+        const escapedPattern = findPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        replacements += (leftText.match(new RegExp(escapedPattern, 'g')) || []).length;
+      }
+    }
+
+    if (replaceTarget === 'right' || replaceTarget === 'both') {
+      if (rightText.includes(findPattern)) {
+        const newText = rightText.replaceAll(findPattern, replaceWith);
+        setRightText(newText);
+        // Count occurrences of the actual pattern
+        const escapedPattern = findPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        replacements += (rightText.match(new RegExp(escapedPattern, 'g')) || []).length;
+      }
+    }
+
+    if (!realTimeDiff) setHasCompared(false);
+
+    // Reset dialog state
+    setFindText('');
+    setReplaceText('');
+    setShowFindReplaceDialog(false);
+
+    if (replacements > 0) {
+      toast({
+        title: 'Find & Replace completed!',
+        description: `Replaced ${replacements} occurrence${replacements === 1 ? '' : 's'}`,
+      });
+    } else {
+      toast({
+        title: 'No matches found',
+        description: 'The find text was not found in the selected content',
+        variant: 'destructive'
+      });
+    }
+  };
+
   return (
     <>
     <div className="flex gap-3 relative">
       {/* Left Sidebar - Tools for Desktop */}
-      <div className="w-36 flex-shrink-0 hidden lg:block">
+      <div className="w-52 flex-shrink-0 hidden lg:block">
         <Card className="sticky top-24 border-0 shadow-md">
           <CardContent className="p-3 space-y-3">
             {/* Toggles */}
@@ -476,6 +744,12 @@ export function TextDiffChecker() {
                   icon={Scissors}
                   label="Trim whitespace"
                   onClick={() => applyTool('trim')}
+                  disabled={!leftText.trim() && !rightText.trim()}
+                />
+                <ToolButton
+                  icon={Replace}
+                  label="Find & Replace"
+                  onClick={() => setShowFindReplaceDialog(true)}
                   disabled={!leftText.trim() && !rightText.trim()}
                 />
               </div>
@@ -546,6 +820,12 @@ export function TextDiffChecker() {
                     disabled={!leftText.trim() && !rightText.trim()}
                   />
                   <ToolButton
+                    icon={Replace}
+                    label="Find & Replace"
+                    onClick={() => { setShowFindReplaceDialog(true); setShowMobileTools(false); }}
+                    disabled={!leftText.trim() && !rightText.trim()}
+                  />
+                  <ToolButton
                     icon={RotateCcw}
                     label="Clear all"
                     onClick={() => { handleClear(); setShowMobileTools(false); }}
@@ -571,10 +851,39 @@ export function TextDiffChecker() {
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 relative">
+              {/* Swap button */}
+              <div className="hidden md:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 w-9 p-0 rounded-full shadow-md bg-card hover:bg-muted border-primary/30 hover:border-primary/50"
+                  onClick={() => {
+                    setLeftText(rightText);
+                    setRightText(leftText);
+                    setLeftFileName(rightFileName);
+                    setRightFileName(leftFileName);
+                    if (!realTimeDiff) setHasCompared(false);
+                    toast({ title: 'Swapped', description: 'Text A and B have been swapped' });
+                  }}
+                  disabled={!leftText.trim() && !rightText.trim()}
+                  title="Swap Text A and B"
+                >
+                  <ArrowRightLeft className="h-4 w-4" />
+                </Button>
+              </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-sm font-semibold">Text A</Label>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm font-semibold">Text A</Label>
+                    {leftFileName && (
+                      <Badge variant="outline" className="text-xs">
+                        <FileText className="h-3 w-3 mr-1" />
+                        {leftFileName}
+                      </Badge>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1">
                     <Button
                       type="button"
@@ -588,6 +897,24 @@ export function TextDiffChecker() {
                       <Wand2 className="h-3.5 w-3.5" />
                       <span className="text-xs">Format</span>
                     </Button>
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept=".txt,.json,.js,.ts,.html,.css,.md,.xml,.csv,.log"
+                        onChange={handleFileUpload('left')}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        title="Upload file"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-muted-foreground hover:text-primary"
+                        title="Upload file"
+                      >
+                        <Upload className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                     <Button
                       type="button"
                       variant="ghost"
@@ -606,7 +933,10 @@ export function TextDiffChecker() {
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setLeftText('')}
+                      onClick={() => {
+                        setLeftText('');
+                        setLeftFileName('');
+                      }}
                       disabled={!leftText.trim()}
                       className="h-7 px-2 text-muted-foreground hover:text-destructive"
                     >
@@ -617,13 +947,25 @@ export function TextDiffChecker() {
                 <Textarea
                   placeholder="Paste original text or JSON here..."
                   value={leftText}
-                  onChange={(e) => { setLeftText(e.target.value); if (!realTimeDiff) setHasCompared(false); }}
+                  onChange={(e) => {
+                    setLeftText(e.target.value);
+                    if (!realTimeDiff) setHasCompared(false);
+                    if (!e.target.value.trim()) setLeftFileName('');
+                  }}
                   className="font-mono text-sm min-h-[200px] resize-y bg-muted/50 border-2 focus:border-primary/50 transition-colors"
                 />
               </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-sm font-semibold">Text B</Label>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm font-semibold">Text B</Label>
+                    {rightFileName && (
+                      <Badge variant="outline" className="text-xs">
+                        <FileText className="h-3 w-3 mr-1" />
+                        {rightFileName}
+                      </Badge>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1">
                     <Button
                       type="button"
@@ -637,6 +979,24 @@ export function TextDiffChecker() {
                       <Wand2 className="h-3.5 w-3.5" />
                       <span className="text-xs">Format</span>
                     </Button>
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept=".txt,.json,.js,.ts,.html,.css,.md,.xml,.csv,.log"
+                        onChange={handleFileUpload('right')}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        title="Upload file"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-muted-foreground hover:text-accent"
+                        title="Upload file"
+                      >
+                        <Upload className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                     <Button
                       type="button"
                       variant="ghost"
@@ -655,7 +1015,10 @@ export function TextDiffChecker() {
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setRightText('')}
+                      onClick={() => {
+                        setRightText('');
+                        setRightFileName('');
+                      }}
                       disabled={!rightText.trim()}
                       className="h-7 px-2 text-muted-foreground hover:text-destructive"
                     >
@@ -666,7 +1029,11 @@ export function TextDiffChecker() {
                 <Textarea
                   placeholder="Paste modified text or JSON here..."
                   value={rightText}
-                  onChange={(e) => { setRightText(e.target.value); if (!realTimeDiff) setHasCompared(false); }}
+                  onChange={(e) => {
+                    setRightText(e.target.value);
+                    if (!realTimeDiff) setHasCompared(false);
+                    if (!e.target.value.trim()) setRightFileName('');
+                  }}
                   className="font-mono text-sm min-h-[200px] resize-y bg-muted/50 border-2 focus:border-accent/50 transition-colors"
                 />
               </div>
@@ -709,11 +1076,11 @@ export function TextDiffChecker() {
         {/* Results Section */}
         {diff && (
           <Card className="border-0 shadow-lg overflow-hidden">
-            <CardHeader className="pb-4 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
+            <CardHeader className="pb-0 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg flex items-center gap-2">
                   <div className="p-2 rounded-lg bg-primary/10">
-                    <FileText className="h-5 w-5 text-primary" />
+                    <Code2 className="h-5 w-5 text-primary" />
                   </div>
                   Comparison Result
                   {diff.hasDifferences ? (
@@ -722,7 +1089,97 @@ export function TextDiffChecker() {
                     <Badge variant="success" className="ml-2">Identical</Badge>
                   )}
                 </CardTitle>
+                {/* Statistics Badges */}
                 <div className="flex items-center gap-2">
+                  {statistics && statistics.percentageChanged > 0 && (
+                    <Badge variant="outline" className="gap-1">
+                      <TrendingUp className="h-3 w-3" />
+                      {statistics.percentageChanged.toFixed(1)}% changed
+                    </Badge>
+                  )}
+                  {structuralChangesCount > 0 && (
+                    <Badge variant="secondary" className="gap-1">
+                      <GitBranch className="h-3 w-3" />
+                      {structuralChangesCount} moves
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {/* Toolbar */}
+              <div className="px-6 pt-4 flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  {/* Diff Options */}
+                  <DiffOptionsPanel
+                    options={diffOptions}
+                    onOptionsChange={setDiffOptions}
+                    structuralChangesCount={structuralChangesCount}
+                    contentSize={contentSize}
+                  />
+                  <DiffSearchBar onSearch={handleSearch} />
+                  {/* Path Navigation */}
+                  {isJson && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="outline" size="sm" className="gap-2">
+                          <GitBranch className="h-4 w-4" />
+                          <span className="hidden sm:inline">Go to Path</span>
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[280px]" align="end">
+                        <div className="space-y-2">
+                          <p className="text-sm text-muted-foreground">Navigate to JSON path</p>
+                          <div className="flex gap-2">
+                            <Input
+                              placeholder="$.user.name"
+                              value={pathInput}
+                              onChange={(e) => setPathInput(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && handlePathNavigation()}
+                              className="flex-1"
+                            />
+                            <Button size="sm" onClick={handlePathNavigation} disabled={!pathInput.trim()}>
+                              Go
+                            </Button>
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* View Mode Switcher */}
+                  {isJson && (
+                    <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/50">
+                      <Button
+                        variant={viewMode === 'diff' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        onClick={() => setViewMode('diff')}
+                        className="h-7 px-2 gap-1"
+                      >
+                        <Rows3 className="h-3.5 w-3.5" />
+                        <span className="text-xs">Diff</span>
+                      </Button>
+                      <Button
+                        variant={viewMode === 'foldable' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        onClick={() => setViewMode('foldable')}
+                        className="h-7 px-2 gap-1"
+                      >
+                        <FoldVertical className="h-3.5 w-3.5" />
+                        <span className="text-xs">Foldable</span>
+                      </Button>
+                    </div>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSaveResults}
+                    className="gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span className="hidden sm:inline">Save</span>
+                  </Button>
                   {diff.hasDifferences && (
                     <Button
                       variant="default"
@@ -731,56 +1188,75 @@ export function TextDiffChecker() {
                       className="gap-2"
                     >
                       <GitMerge className="h-4 w-4" />
-                      <span>Merge Mode</span>
+                      <span className="hidden sm:inline">Merge</span>
                     </Button>
                   )}
                   {mergeMode && (
                     <>
                       <Badge variant="secondary">Merge Mode Active</Badge>
-                      <Button
-                        size="sm"
-                        onClick={handleFinishMerge}
-                        className="gap-1"
-                      >
+                      <Button size="sm" onClick={handleFinishMerge} className="gap-1">
                         <Copy className="h-3.5 w-3.5" />
-                        Copy Merged Result
+                        Copy Merged
                       </Button>
                     </>
                   )}
                 </div>
               </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x border-t overflow-hidden">
-                <DiffPanel
-                  title="Text A"
-                  lines={diff.left}
-                  lineCount={leftText.split('\n').length}
-                  removals={diff.removals}
-                  side="left"
-                  content={leftText}
-                  icon={Globe}
-                  accentColor="primary"
-                  isJson={isJson}
-                  onAcceptChange={handleAcceptChange}
-                  onRejectChange={handleRejectChange}
-                  showMergeControls={mergeMode}
-                />
-                <DiffPanel
-                  title="Text B"
-                  lines={diff.right}
-                  lineCount={rightText.split('\n').length}
-                  additions={diff.additions}
-                  side="right"
-                  content={rightText}
-                  icon={Server}
-                  accentColor="accent"
-                  isJson={isJson}
-                  onAcceptChange={handleAcceptChange}
-                  onRejectChange={handleRejectChange}
-                  showMergeControls={mergeMode}
-                />
-              </div>
+
+              {/* Diff Content */}
+              {viewMode === 'diff' ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x border-t mt-4 overflow-hidden">
+                  <DiffPanel
+                    title="Text A"
+                    lines={diffOptions.showOnlyDifferences ? diff.left.filter(l => l.type !== 'unchanged') : diff.left}
+                    lineCount={leftText.split('\n').length}
+                    removals={diff.removals}
+                    side="left"
+                    content={leftText}
+                    icon={Globe}
+                    accentColor="primary"
+                    isJson={isJson}
+                    onAcceptChange={handleAcceptChange}
+                    onRejectChange={handleRejectChange}
+                    showMergeControls={mergeMode}
+                  />
+                  <DiffPanel
+                    title="Text B"
+                    lines={diffOptions.showOnlyDifferences ? diff.right.filter(l => l.type !== 'unchanged') : diff.right}
+                    lineCount={rightText.split('\n').length}
+                    additions={diff.additions}
+                    side="right"
+                    content={rightText}
+                    icon={Server}
+                    accentColor="accent"
+                    isJson={isJson}
+                    onAcceptChange={handleAcceptChange}
+                    onRejectChange={handleRejectChange}
+                    showMergeControls={mergeMode}
+                  />
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 divide-x border-t mt-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 p-3 border-b bg-gradient-to-r from-primary/10 to-card">
+                      <div className="p-1.5 rounded-lg bg-primary/10">
+                        <Globe className="h-4 w-4 text-primary" />
+                      </div>
+                      <span className="font-semibold text-sm">Text A</span>
+                    </div>
+                    <FoldableJson content={isJson ? formatJson(leftText) : leftText} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 p-3 border-b bg-gradient-to-r from-accent/10 to-card">
+                      <div className="p-1.5 rounded-lg bg-accent/10">
+                        <Server className="h-4 w-4 text-accent" />
+                      </div>
+                      <span className="font-semibold text-sm">Text B</span>
+                    </div>
+                    <FoldableJson content={isJson ? formatJson(rightText) : rightText} />
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
@@ -849,6 +1325,101 @@ export function TextDiffChecker() {
         </DialogContent>
       </Dialog>
     )}
+
+    {/* Find & Replace Dialog */}
+    <Dialog open={showFindReplaceDialog} onOpenChange={setShowFindReplaceDialog}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Replace className="h-5 w-5" />
+            Find & Replace
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="find-text">Find</Label>
+            <input
+              id="find-text"
+              type="text"
+              value={findText}
+              onChange={(e) => setFindText(e.target.value)}
+              placeholder="Enter text to find..."
+              className="w-full px-3 py-2 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+            />
+            <p className="text-xs text-muted-foreground">
+              Use \n for newline, \t for tab, \r for carriage return
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="replace-text">Replace with</Label>
+            <input
+              id="replace-text"
+              type="text"
+              value={replaceText}
+              onChange={(e) => setReplaceText(e.target.value)}
+              placeholder="Enter replacement text..."
+              className="w-full px-3 py-2 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+            />
+            <p className="text-xs text-muted-foreground">
+              Use \n for newline, \t for tab, etc.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>Apply to</Label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setReplaceTarget('left')}
+                className={`px-3 py-1 text-xs rounded-md border transition-colors ${
+                  replaceTarget === 'left'
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background border-input hover:bg-accent'
+                }`}
+              >
+                Text A only
+              </button>
+              <button
+                type="button"
+                onClick={() => setReplaceTarget('right')}
+                className={`px-3 py-1 text-xs rounded-md border transition-colors ${
+                  replaceTarget === 'right'
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background border-input hover:bg-accent'
+                }`}
+              >
+                Text B only
+              </button>
+              <button
+                type="button"
+                onClick={() => setReplaceTarget('both')}
+                className={`px-3 py-1 text-xs rounded-md border transition-colors ${
+                  replaceTarget === 'both'
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background border-input hover:bg-accent'
+                }`}
+              >
+                Both texts
+              </button>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setShowFindReplaceDialog(false);
+              setFindText('');
+              setReplaceText('');
+            }}
+          >
+            Cancel
+          </Button>
+          <Button onClick={handleFindReplace}>
+            Replace All
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }

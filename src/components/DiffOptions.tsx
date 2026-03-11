@@ -301,7 +301,7 @@ export function DiffOptionsPanel({
                     placeholder="Key to ignore"
                     value={ignoreKeysInput}
                     onChange={(e) => setIgnoreKeysInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleAddIgnoreKey()}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddIgnoreKey()}
                     className="h-8 text-sm"
                   />
                   <Button
@@ -348,7 +348,7 @@ export function DiffOptionsPanel({
                     placeholder="$.path.to.ignore"
                     value={ignorePathsInput}
                     onChange={(e) => setIgnorePathsInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleAddIgnorePath()}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddIgnorePath()}
                     className="h-8 text-sm"
                   />
                   <Button
@@ -454,7 +454,7 @@ export function DiffSearchBar({
               placeholder="Search in diff..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               className="flex-1"
             />
             <Button

@@ -61,7 +61,20 @@ function JsonNodeLine({
       }
       return <span className="text-[hsl(var(--syntax-bracket))]">{isArray ? '[' : '{'}</span>;
     }
-    return <JsonSyntaxHighlight content={JSON.stringify(value)} />;
+    // Render primitives directly with type-based coloring to avoid regex/HTML issues
+    if (typeof value === 'string') {
+      return <span className="text-[hsl(var(--syntax-string))]">"{value}"</span>;
+    }
+    if (typeof value === 'number') {
+      return <span className="text-[hsl(var(--syntax-number))]">{value}</span>;
+    }
+    if (typeof value === 'boolean') {
+      return <span className="text-[hsl(var(--syntax-boolean))]">{String(value)}</span>;
+    }
+    if (value === null) {
+      return <span className="text-[hsl(var(--syntax-null))]">null</span>;
+    }
+    return <span>{JSON.stringify(value)}</span>;
   };
 
   return (
