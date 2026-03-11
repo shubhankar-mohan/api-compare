@@ -24,39 +24,38 @@ export function JsonSyntaxHighlight({ content, className }: JsonSyntaxHighlightP
     ];
 
     let result = text;
+    const claimed = new Set<number>();
     const tokens: { start: number; end: number; replacement: string }[] = [];
 
-    // Find all matches
+    // Process patterns in priority order (strings first to prevent
+    // numbers/booleans inside strings from being matched separately)
     patterns.forEach(({ regex, class: className }) => {
       let match;
       regex.lastIndex = 0;
       while ((match = regex.exec(text)) !== null) {
-        tokens.push({
-          start: match.index,
-          end: match.index + match[0].length,
-          replacement: `<span class="${className}">${escapeHtml(match[0])}</span>`,
-        });
+        const start = match.index;
+        const end = start + match[0].length;
+        // Skip if any position in this range is already claimed
+        let overlaps = false;
+        for (let i = start; i < end; i++) {
+          if (claimed.has(i)) { overlaps = true; break; }
+        }
+        if (!overlaps) {
+          for (let i = start; i < end; i++) claimed.add(i);
+          tokens.push({
+            start,
+            end,
+            replacement: `<span class="${className}">${escapeHtml(match[0])}</span>`,
+          });
+        }
       }
     });
 
-    // Sort tokens by start position (descending) to replace from end to start
+    // Sort by start position descending to replace from end to start
     tokens.sort((a, b) => b.start - a.start);
 
-    // Check for overlapping tokens and keep only the first one
-    const finalTokens: typeof tokens = [];
-    tokens.forEach(token => {
-      const overlaps = finalTokens.some(
-        existing =>
-          (token.start >= existing.start && token.start < existing.end) ||
-          (token.end > existing.start && token.end <= existing.end)
-      );
-      if (!overlaps) {
-        finalTokens.push(token);
-      }
-    });
-
     // Apply replacements
-    finalTokens.forEach(({ start, end, replacement }) => {
+    tokens.forEach(({ start, end, replacement }) => {
       result = result.substring(0, start) + replacement + result.substring(end);
     });
 
