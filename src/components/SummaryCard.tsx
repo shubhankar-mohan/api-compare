@@ -16,9 +16,11 @@ interface SummaryCardProps {
   original: ApiResponse;
   localhost: ApiResponse;
   hasDifferences: boolean;
+  /** True when computeDiffStatistics was skipped due to input size. */
+  statsSkipped?: boolean;
 }
 
-export function SummaryCard({ original, localhost, hasDifferences }: SummaryCardProps) {
+export function SummaryCard({ original, localhost, hasDifferences, statsSkipped }: SummaryCardProps) {
   const statusMatch = original.status === localhost.status;
   const bothSuccessful = original.success && localhost.success;
 
@@ -154,6 +156,15 @@ export function SummaryCard({ original, localhost, hasDifferences }: SummaryCard
             )}
           </div>
         </div>
+
+        {/* Stats skipped notice (large diffs) */}
+        {statsSkipped && (
+          <div className="mt-4 pt-4 border-t">
+            <p className="text-xs text-muted-foreground italic">
+              Stats unavailable for large diffs
+            </p>
+          </div>
+        )}
 
         {/* Error Messages */}
         {(original.error || localhost.error) && (
