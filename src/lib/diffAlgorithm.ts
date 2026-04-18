@@ -1,4 +1,5 @@
-import { detectFieldType } from './smartComparison';
+import { detectFieldType, CLASSIFIERS } from './smartComparison';
+import type { NoiseRule } from './noiseRules';
 import { computeStructuralDiff } from './structuralDiff';
 
 export type DiffLineType = 'added' | 'removed' | 'unchanged' | 'empty' | 'modified';
@@ -391,15 +392,15 @@ function normalizeLine(line: string, config?: ComparisonConfig): string {
   return normalized;
 }
 
-export function computeDiff(leftText: string, rightText: string, options?: { advancedMode?: boolean; config?: ComparisonConfig }): DiffResult {
+export function computeDiff(leftText: string, rightText: string, options?: { advancedMode?: boolean; config?: ComparisonConfig; rules?: NoiseRule[] }): DiffResult {
   const config = options?.config || {};
-  
+
   // Check if this is JSON content
   const isJson = isJsonContent(leftText) && isJsonContent(rightText);
-  
+
   // For JSON content, use structural diff with smart field detection
   if (isJson) {
-    return computeSmartJsonDiff(leftText, rightText, config);
+    return computeSmartJsonDiff(leftText, rightText, config, options?.rules);
   }
   
   // For YAML/config files, use structural diff
@@ -692,19 +693,25 @@ function isJsonContent(text: string): boolean {
 }
 
 // Smart JSON diff that understands field types
-function computeSmartJsonDiff(leftText: string, rightText: string, config?: ComparisonConfig): DiffResult {
+function computeSmartJsonDiff(
+  leftText: string,
+  rightText: string,
+  config?: ComparisonConfig,
+  rules?: NoiseRule[]
+): DiffResult {
   try {
     const leftJson = JSON.parse(leftText);
     const rightJson = JSON.parse(rightText);
-    
+
     // Format both JSONs
     const leftFormatted = JSON.stringify(leftJson, null, 2);
     const rightFormatted = JSON.stringify(rightJson, null, 2);
-    
-    // Preprocess to mark timestamp/ID fields
-    const leftProcessed = preprocessJsonForComparison(leftFormatted);
-    const rightProcessed = preprocessJsonForComparison(rightFormatted);
-    
+
+    // Preprocess to mark timestamp/ID fields and inject noise-aware markers.
+    // Same rule set is applied to both sides so the diff aligns properly.
+    const leftProcessed = preprocessJsonForComparison(leftFormatted, rules);
+    const rightProcessed = preprocessJsonForComparison(rightFormatted, rules);
+
     // Use structural diff for better alignment
     return computeStructuralDiff(leftProcessed, rightProcessed, config);
   } catch {
@@ -713,31 +720,285 @@ function computeSmartJsonDiff(leftText: string, rightText: string, config?: Comp
   }
 }
 
-// Preprocess JSON to normalize timestamps and IDs
-function preprocessJsonForComparison(jsonText: string): string {
+/**
+ * Check whether a rule path matches the current JSON path.
+ *
+ * Rule path syntax (intentionally narrow for v1):
+ * - exact match:                "$.data.user.id"
+ * - leading wildcard descendant: "$..traceId"   (matches any ancestor)
+ * - segment wildcard:            "$.items[*].id" (matches any array index)
+ *
+ * Both `$..foo` and `$.foo` work for top-level fields. Comparison is
+ * case-sensitive. Internal lookup is O(1) per call (one regex per rule
+ * compiled lazily and cached on the rule object via WeakMap).
+ */
+const ruleMatcherCache = new WeakMap<NoiseRule, RegExp | null>();
+function ruleMatchesPath(rule: NoiseRule, jsonPath: string): boolean {
+  let matcher = ruleMatcherCache.get(rule);
+  if (matcher === undefined) {
+    matcher = compileRulePath(rule.path);
+    ruleMatcherCache.set(rule, matcher);
+  }
+  if (!matcher) return false;
+  // Strip leading `$` from the runtime path so it lines up with the regex
+  // (which had the leading `$` stripped at compile time).
+  const stripped = jsonPath.startsWith('$') ? jsonPath.slice(1) : jsonPath;
+  return matcher.test(stripped);
+}
+
+function compileRulePath(rulePath: string): RegExp | null {
+  if (!rulePath || typeof rulePath !== 'string') return null;
+  let p = rulePath.trim();
+  // Strip leading $
+  if (p.startsWith('$')) p = p.slice(1);
+  if (!p) return /^.*$/;
+
+  // Build a regex from the simplified path
+  // Replace `..foo` (descendant) with `(?:.*\.)?foo` so it matches anywhere
+  // Replace `[*]` with a digit-index wildcard
+  // Escape literal dots and brackets
+  let pattern = '';
+  let i = 0;
+  while (i < p.length) {
+    const ch = p[i];
+    if (ch === '.' && p[i + 1] === '.') {
+      // Descendant marker — match ".x" anywhere from current point
+      pattern += '(?:.*\\.)?';
+      i += 2;
+      continue;
+    }
+    if (ch === '.') {
+      pattern += '\\.';
+      i += 1;
+      continue;
+    }
+    if (ch === '[' && p[i + 1] === '*' && p[i + 2] === ']') {
+      pattern += '\\[\\d+\\]';
+      i += 3;
+      continue;
+    }
+    if (ch === '[' || ch === ']') {
+      pattern += '\\' + ch;
+      i += 1;
+      continue;
+    }
+    if ('+?^${}()|\\/'.includes(ch)) {
+      pattern += '\\' + ch;
+      i += 1;
+      continue;
+    }
+    pattern += ch;
+    i += 1;
+  }
+  try {
+    return new RegExp('^' + pattern + '$');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Preprocess JSON text to inject inline noise-aware markers.
+ *
+ * Markers:
+ * - `/\* TIMESTAMP *\/` — legacy marker for timestamp values (kept for
+ *   downstream compatibility).
+ * - `/\* ID *\/`        — legacy marker for ID values.
+ * - `/\* NOISE:<classifier>:auto *\/` — a classifier matched the value AND
+ *   the field name semantically aligns (high-confidence; chip surfaces in UI).
+ * - `/\* NOISE:<classifier>:rule *\/` — a saved noise rule applies to this
+ *   path (UI renders the line collapsed/greyed).
+ *
+ * Path tracking: we walk the formatted JSON line-by-line using a
+ * 2-space-indent assumption (`JSON.stringify(obj, null, 2)`). We maintain a
+ * stack of `{ key, isArray, arrayIndex }` frames keyed by indent depth.
+ *
+ * Performance: O(n × R) where n is line count and R is rule count. For
+ * typical R ≤ 50 this is effectively linear. Markers are appended in place
+ * — we never insert new lines, because that would inflate downstream LCS
+ * cost (LCS is O(m × n) on line counts; the existing 1500-line guard
+ * assumes line counts stay bounded).
+ *
+ * Exported so unit tests can call it directly.
+ */
+export function preprocessJsonForComparison(
+  jsonText: string,
+  rules?: NoiseRule[]
+): string {
   const lines = jsonText.split('\n');
-  return lines.map(line => {
-    // Check if line contains a field that looks like timestamp or ID
-    const fieldMatch = line.match(/^(\s*)"([^"]+)"\s*:\s*(.+)/);
+  const safeRules = rules && rules.length ? rules : null;
+
+  // Path-tracking stack. Each frame represents one container (object or
+  // array). For objects we record the key under which it was opened; for
+  // arrays we additionally track the running element index.
+  type Frame = { key: string | null; isArray: boolean; arrayIndex: number };
+  const stack: Frame[] = [];
+
+  // Helper: compute the JSON path for the current line's field.
+  //
+  // Walks the stack frames in order. For each frame with a non-null key,
+  // append `.key`. For array frames, additionally append `[idx]` for the
+  // currently-visited element (we pre-increment on element open, so the
+  // active element is at `arrayIndex - 1`).
+  //
+  // currentKey: the field name of the line we're labeling, or null if
+  //   the line is itself an array element with no key.
+  function pathFor(currentKey: string | null): string {
+    let p = '$';
+    for (let idx = 0; idx < stack.length; idx++) {
+      const frame = stack[idx];
+      if (frame.key !== null) {
+        p += `.${frame.key}`;
+      }
+      if (frame.isArray) {
+        // Append [arrayIndex - 1] to indicate the CURRENT element.
+        const elementIdx = Math.max(0, frame.arrayIndex - 1);
+        p += `[${elementIdx}]`;
+      }
+    }
+    if (currentKey !== null) {
+      p += `.${currentKey}`;
+    }
+    return p;
+  }
+
+  const out: string[] = new Array(lines.length);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Detect the structural shape of this line. JSON.stringify(obj, null, 2)
+    // produces predictable forms:
+    //   `  "key": value,`
+    //   `  "key": value`
+    //   `  "key": {`        (object open)
+    //   `  "key": [`        (array open)
+    //   `  },` `  }` `  ],` `  ]`  (close)
+    //   `  value,` or `  value`    (array element, no key)
+    //   `  {`              (array element opening object)
+
+    // Field with key + value (may also open object/array with `{` or `[`)
+    const fieldMatch = line.match(/^(\s*)"([^"]+)"\s*:\s*(.+)$/);
+    // Pure container open without a key (array element that's an object/array)
+    const arrayElementOpen = !fieldMatch && /^\s*[{[]\s*$/.test(line);
+    // Container close
+    const closeMatch = line.match(/^(\s*)([}\]])\s*,?\s*$/);
+    // Array element scalar (no key)
+    const arrayElementScalar =
+      !fieldMatch && !arrayElementOpen && !closeMatch && /^\s*[^\s].*$/.test(line.trim()) && line.trim() !== '';
+
+    let processed = line;
+
+    // Apply noise tagging when this line is a "key: value" pair
     if (fieldMatch) {
-      const [, indent, key, value] = fieldMatch;
-      const fieldType = detectFieldType(key, value);
-      
-      if (fieldType === 'timestamp') {
-        // Check if values are actually different timestamps
-        const timestampPattern = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}|\d{10,13}/;
-        if (timestampPattern.test(value)) {
-          // Mark timestamp fields to be treated specially
-          return `${indent}"${key}": ${value} /* TIMESTAMP */`;
+      const [, indent, key, valueRaw] = fieldMatch;
+      const value = valueRaw.replace(/,\s*$/, '').trim(); // strip trailing comma for classification
+
+      // Only tag if value is a scalar (not opening a container)
+      const isContainerOpen = value === '{' || value === '[';
+      if (!isContainerOpen) {
+        const fieldType = detectFieldType(key, value);
+        let appended = '';
+
+        if (fieldType === 'timestamp') {
+          const timestampPattern = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}|\d{10,13}/;
+          if (timestampPattern.test(value)) {
+            appended += ' /* TIMESTAMP */';
+          }
+        } else if (fieldType === 'id') {
+          const idPattern = /"[0-9a-f-]+"|"(usr_|sess_|prod_|req_)[^"]+"/;
+          if (idPattern.test(value)) {
+            appended += ' /* ID */';
+          }
         }
-      } else if (fieldType === 'id') {
-        // Mark ID fields
-        const idPattern = /"[0-9a-f-]+"|"(usr_|sess_|prod_|req_)[^"]+"/;
-        if (idPattern.test(value)) {
-          return `${indent}"${key}": ${value} /* ID */`;
+
+        // Run classifier registry. High-confidence rule: classifier matches
+        // value AND `detectFieldType` returns a non-'normal' label. This
+        // implements the two-level confidence model from the design doc:
+        // we never auto-suggest if only the value matches (medium); we
+        // auto-suggest only when both name and value agree (high).
+        const valueForClassifier = stripQuotes(value);
+        const semanticallyAligned = fieldType !== 'normal';
+        if (semanticallyAligned && valueForClassifier !== null) {
+          for (const c of CLASSIFIERS) {
+            if (c.match(valueForClassifier)) {
+              appended += ` /* NOISE:${c.name}:auto */`;
+              break;
+            }
+          }
+        }
+
+        // Apply rules whose path matches this field's path
+        if (safeRules) {
+          const currentPath = pathFor(key);
+          for (const rule of safeRules) {
+            if (ruleMatchesPath(rule, currentPath)) {
+              appended += ` /* NOISE:${rule.type}:rule */`;
+              break; // first matching rule wins; precedent doc'd in design
+            }
+          }
+        }
+
+        if (appended) {
+          // Preserve original trailing comma if any
+          const hadComma = /,\s*$/.test(valueRaw);
+          processed = `${indent}"${key}": ${value}${hadComma ? ',' : ''}${appended}`;
         }
       }
     }
-    return line;
-  }).join('\n');
+
+    out[i] = processed;
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Update the path-tracking stack AFTER processing the line.
+    // We update based on what this line OPENS or CLOSES.
+
+    // If the line opens a container (key + `{` or `[`)
+    if (fieldMatch) {
+      const [, , key, valueRaw] = fieldMatch;
+      const value = valueRaw.trim();
+      if (value.startsWith('{')) {
+        stack.push({ key, isArray: false, arrayIndex: 0 });
+      } else if (value.startsWith('[')) {
+        // Push array frame; key recorded so the path includes the field name
+        stack.push({ key, isArray: true, arrayIndex: 0 });
+      }
+    } else if (arrayElementOpen) {
+      // An object/array element inside an array — increment array index
+      // belonging to the parent array frame, then push container frame.
+      // The container's "key" is null (no field name).
+      const parent = stack[stack.length - 1];
+      if (parent && parent.isArray) {
+        parent.arrayIndex += 1;
+      }
+      const trimmed = line.trim();
+      if (trimmed.startsWith('{')) {
+        stack.push({ key: null, isArray: false, arrayIndex: 0 });
+      } else if (trimmed.startsWith('[')) {
+        stack.push({ key: null, isArray: true, arrayIndex: 0 });
+      }
+    } else if (arrayElementScalar) {
+      // A scalar value inside an array — bump parent array index
+      const parent = stack[stack.length - 1];
+      if (parent && parent.isArray) {
+        parent.arrayIndex += 1;
+      }
+    } else if (closeMatch) {
+      stack.pop();
+    }
+  }
+
+  return out.join('\n');
+}
+
+// Helper used by preprocessJsonForComparison: strip surrounding double
+// quotes from a JSON string-literal value so classifiers see the raw text.
+function stripQuotes(value: string): string | null {
+  const v = value.trim().replace(/,\s*$/, '');
+  if (v.startsWith('"') && v.endsWith('"') && v.length >= 2) {
+    return v.slice(1, -1);
+  }
+  // Numbers / booleans / null are returned as-is for classifiers that
+  // accept them; they generally won't match string-shaped patterns.
+  return v;
 }
