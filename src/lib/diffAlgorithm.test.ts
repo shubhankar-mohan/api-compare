@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { computeDiff, formatJson, clearSimilarityCache } from './diffAlgorithm';
+import { computeDiff, formatJson, clearSimilarityCache, preprocessJsonForComparison } from './diffAlgorithm';
 import { computeEnhancedDiff } from './enhancedDiffAlgorithm';
+import type { NoiseRule } from './noiseRules';
 
 describe('diffAlgorithm', () => {
   // ──────────────────────────────────────────────
@@ -176,7 +177,120 @@ describe('diffAlgorithm', () => {
   });
 
   // ──────────────────────────────────────────────
-  // Performance regression: 10k / 20k line JSON via computeEnhancedDiff
+  // preprocessJsonForComparison — noise marker injection (Lane A)
+  // ──────────────────────────────────────────────
+  describe('preprocessJsonForComparison — noise markers', () => {
+    it('appends NOISE:uuid:auto when key+value match (high confidence)', () => {
+      const json = JSON.stringify({ orderId: '550e8400-e29b-41d4-a716-446655440000' }, null, 2);
+      const out = preprocessJsonForComparison(json);
+      expect(out).toContain('/* NOISE:uuid:auto */');
+    });
+
+    it('appends NOISE:jwt:auto for token-shaped values when key is token-like', () => {
+      const json = JSON.stringify({
+        token: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+      }, null, 2);
+      const out = preprocessJsonForComparison(json);
+      expect(out).toContain('/* NOISE:jwt:auto */');
+    });
+
+    it('does NOT append NOISE for value-only matches (medium confidence)', () => {
+      // value looks like UUID but key name doesn't suggest an id field
+      const json = JSON.stringify({ product_sku: '550e8400-e29b-41d4-a716-446655440000' }, null, 2);
+      const out = preprocessJsonForComparison(json);
+      expect(out).not.toContain('/* NOISE:uuid:auto */');
+    });
+
+    it('appends NOISE:<type>:rule when a rule matches the path', () => {
+      const json = JSON.stringify({ data: { traceId: 'abc-123' } }, null, 2);
+      const rules: NoiseRule[] = [
+        { path: '$.data.traceId', type: 'trace-id', source: 'manual', createdAt: 1 },
+      ];
+      const out = preprocessJsonForComparison(json, rules);
+      expect(out).toContain('/* NOISE:trace-id:rule */');
+    });
+
+    it('matches descendant wildcard rule paths ($..foo)', () => {
+      const json = JSON.stringify({ a: { b: { traceId: 'xyz' } } }, null, 2);
+      const rules: NoiseRule[] = [
+        { path: '$..traceId', type: 'trace-id', source: 'manual', createdAt: 1 },
+      ];
+      const out = preprocessJsonForComparison(json, rules);
+      expect(out).toContain('/* NOISE:trace-id:rule */');
+    });
+
+    it('matches array-index wildcard rule paths ($.items[*].id)', () => {
+      const json = JSON.stringify({
+        items: [
+          { id: '550e8400-e29b-41d4-a716-446655440000', name: 'a' },
+          { id: '660e8400-e29b-41d4-a716-446655440001', name: 'b' },
+        ],
+      }, null, 2);
+      const rules: NoiseRule[] = [
+        { path: '$.items[*].id', type: 'uuid', source: 'manual', createdAt: 1 },
+      ];
+      const out = preprocessJsonForComparison(json, rules);
+      const ruleHits = (out.match(/\/\* NOISE:uuid:rule \*\//g) || []).length;
+      expect(ruleHits).toBe(2);
+    });
+
+    it('does NOT add new lines (line count preserved)', () => {
+      const json = JSON.stringify({
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        token: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+        nested: { traceId: 'xyz' },
+      }, null, 2);
+      const rules: NoiseRule[] = [
+        { path: '$..traceId', type: 'trace-id', source: 'manual', createdAt: 1 },
+      ];
+      const before = json.split('\n').length;
+      const after = preprocessJsonForComparison(json, rules).split('\n').length;
+      expect(after).toBe(before);
+    });
+
+    it('preserves trailing comma after marker injection', () => {
+      const json = JSON.stringify({
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        next: 'value',
+      }, null, 2);
+      const out = preprocessJsonForComparison(json);
+      // The id line should still have a comma before the markers
+      const idLine = out.split('\n').find((l) => l.includes('"id"'));
+      expect(idLine).toBeDefined();
+      // Comma comes immediately after value, then any markers (legacy or NOISE)
+      expect(idLine).toMatch(/", \/\*/);
+      expect(idLine).toContain('/* NOISE:uuid:auto */');
+    });
+
+    it('legacy TIMESTAMP/ID markers still work', () => {
+      const json = JSON.stringify({
+        created_at: '2026-04-18T15:30:45Z',
+        userId: 'usr_abc123',
+      }, null, 2);
+      const out = preprocessJsonForComparison(json);
+      expect(out).toContain('/* TIMESTAMP */');
+      expect(out).toContain('/* ID */');
+    });
+
+    it('passing no rules behaves identically to passing []', () => {
+      const json = JSON.stringify({ a: 1, b: { c: '550e8400-e29b-41d4-a716-446655440000' } }, null, 2);
+      const out1 = preprocessJsonForComparison(json);
+      const out2 = preprocessJsonForComparison(json, []);
+      expect(out1).toBe(out2);
+    });
+
+    it('rule path on a top-level field matches via $.field', () => {
+      const json = JSON.stringify({ traceId: 'abc' }, null, 2);
+      const rules: NoiseRule[] = [
+        { path: '$.traceId', type: 'trace-id', source: 'manual', createdAt: 1 },
+      ];
+      const out = preprocessJsonForComparison(json, rules);
+      expect(out).toContain('/* NOISE:trace-id:rule */');
+    });
+  });
+
+  // ──────────────────────────────────────────────
+  // Performance regression: 10k / 20k line JSON via computeEnhancedDiff (Lane B)
   // ──────────────────────────────────────────────
   describe('performance - enhanced diff at very large sizes', () => {
     // Synthetic JSON: array of N objects with `fieldsPerObj` fields each.

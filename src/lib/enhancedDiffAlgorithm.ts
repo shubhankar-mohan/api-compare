@@ -1,4 +1,5 @@
 import { DiffLine, DiffSegment, DiffResult, computeDiff, clearSimilarityCache } from './diffAlgorithm';
+import type { NoiseRule } from './noiseRules';
 
 export interface DiffOptions {
   // Performance options
@@ -425,10 +426,18 @@ function filterIgnoredContent(obj: any, options: DiffOptions, path: string): any
 }
 
 // Enhanced diff computation
+//
+// `rules` is optional. When provided, it's threaded through to the
+// preprocessing layer (`preprocessJsonForComparison` in diffAlgorithm.ts)
+// which injects inline `/* NOISE:<type>:rule *\/` markers on lines whose
+// JSON path matches a saved rule. Existing callers that omit the parameter
+// see no behavior change. Lane B owns deeper changes to this file (cache
+// eviction, statistics, structural matching) — this is a pure pass-through.
 export function computeEnhancedDiff(
   leftText: string,
   rightText: string,
-  options: DiffOptions = {}
+  options: DiffOptions = {},
+  rules?: NoiseRule[]
 ): EnhancedDiffResult {
   // Clear caches for new comparison
   clearSimilarityCache();
@@ -516,7 +525,7 @@ export function computeEnhancedDiff(
   const rightFormatted = isJson ? JSON.stringify(rightObj, null, 2) : rightText;
   
   // Use existing diff algorithm for line-by-line comparison
-  const basicDiff = computeDiff(leftFormatted, rightFormatted, { advancedMode: options.advancedMode });
+  const basicDiff = computeDiff(leftFormatted, rightFormatted, { advancedMode: options.advancedMode, rules });
   
   return {
     ...basicDiff,
