@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { JsonSyntaxHighlight } from './JsonSyntaxHighlight';
 import { FoldableJson } from './FoldableJson';
 import { DiffOptionsPanel, DiffSearchBar } from './DiffOptions';
+import { RulesViewer } from './RulesViewer';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { MergeView } from './MergeView';
@@ -648,6 +649,15 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                 onOptionsChange={setDiffOptions}
                 structuralChangesCount={structuralChangesCount}
                 contentSize={contentSize}
+              />
+              {/* Rules viewer — sibling of DiffOptions per CEO/design review */}
+              <RulesViewer
+                endpoint={original.url || ''}
+                rules={endpointRules}
+                onRulesChanged={() => {
+                  if (endpointKey) setEndpointRules(loadRules(endpointKey));
+                  setRulesVersion((v) => v + 1);
+                }}
               />
               <DiffSearchBar onSearch={handleSearch} />
 
