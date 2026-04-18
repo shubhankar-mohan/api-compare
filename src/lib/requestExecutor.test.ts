@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { executeComparison } from './requestExecutor';
+import { executeComparison, sanitizeHeadersForFetch } from './requestExecutor';
 import { ParsedCurl } from './curlParser';
 
 // Mock fetch globally
@@ -116,6 +116,47 @@ describe('requestExecutor', () => {
       const firstCall = mockFetch.mock.calls[0];
       expect(firstCall[1].method).toBe('POST');
       expect(firstCall[1].body).toBe('{"test":true}');
+    });
+
+    it('strips browser-only headers before fetch (CORS preflight fix)', async () => {
+      mockFetch.mockResolvedValue({
+        status: 200,
+        statusText: 'OK',
+        headers: new Headers(),
+        text: () => Promise.resolve('ok'),
+      });
+
+      await executeComparison(
+        makeParsed('https://api.example.com/data', {
+          method: 'POST',
+          headers: {
+            'accept': 'application/json',
+            'content-type': 'application/json',
+            'origin': 'https://other.example.com',
+            'referer': 'https://other.example.com/',
+            'priority': 'u=1, i',
+            'sec-ch-ua': '"Chromium";v="146"',
+            'sec-fetch-mode': 'cors',
+            'user-agent': 'Mozilla/5.0',
+            'authorization': 'Bearer abc',
+          },
+          body: '{"test":true}',
+        }),
+        makeParsed('http://localhost:8080/data', { method: 'POST' })
+      );
+
+      const sentHeaders = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+      // Kept
+      expect(sentHeaders['accept']).toBe('application/json');
+      expect(sentHeaders['content-type']).toBe('application/json');
+      expect(sentHeaders['authorization']).toBe('Bearer abc');
+      // Stripped
+      expect(sentHeaders['origin']).toBeUndefined();
+      expect(sentHeaders['referer']).toBeUndefined();
+      expect(sentHeaders['priority']).toBeUndefined();
+      expect(sentHeaders['sec-ch-ua']).toBeUndefined();
+      expect(sentHeaders['sec-fetch-mode']).toBeUndefined();
+      expect(sentHeaders['user-agent']).toBeUndefined();
     });
 
     it('includes responseTime in results', async () => {

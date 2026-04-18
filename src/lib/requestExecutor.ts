@@ -47,12 +47,53 @@ function getStatusText(status: number, responseStatusText: string): string {
   return HTTP_STATUS_TEXT[status] || 'Unknown';
 }
 
+// Headers that browsers refuse to set via fetch() (or that aren't part of API contracts).
+// Browser-copied curls include lots of these — keeping them causes CORS preflight failures
+// because the server's Access-Control-Allow-Headers list rarely includes them all.
+const STRIP_HEADER_NAMES = new Set([
+  'accept-charset',
+  'accept-encoding',
+  'access-control-request-headers',
+  'access-control-request-method',
+  'connection',
+  'content-length',
+  'cookie',
+  'cookie2',
+  'date',
+  'dnt',
+  'expect',
+  'feature-policy',
+  'host',
+  'keep-alive',
+  'origin',
+  'priority',
+  'referer',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'user-agent',
+  'via',
+]);
+
+export function sanitizeHeadersForFetch(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const lower = key.toLowerCase();
+    if (STRIP_HEADER_NAMES.has(lower)) continue;
+    if (lower.startsWith('sec-')) continue;
+    if (lower.startsWith('proxy-')) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiResponse> {
   const startTime = performance.now();
   try {
     const fetchOptions: RequestInit = {
       method: parsed.method,
-      headers: parsed.headers,
+      headers: sanitizeHeadersForFetch(parsed.headers),
       mode: 'cors',
     };
 
