@@ -77,7 +77,23 @@ const Index = () => {
     }
   };
 
-  const bodyDiff = result ? computeDiff(formatJson(result.original.body), formatJson(result.localhost.body)) : null;
+  const leftFormatted = result ? formatJson(result.original.body) : '';
+  const rightFormatted = result ? formatJson(result.localhost.body) : '';
+  const bodyDiff = result ? computeDiff(leftFormatted, rightFormatted) : null;
+
+  // Mirror Lane B's stats-skipped gate (src/lib/enhancedDiffAlgorithm.ts STATS_MAX_LINES = 3000)
+  // so SummaryCard can show "Stats unavailable for large diffs" without lifting state from DiffViewer,
+  // which computes the enhanced diff separately.
+  let statsSkipped = false;
+  if (result) {
+    try {
+      JSON.parse(leftFormatted);
+      JSON.parse(rightFormatted);
+      statsSkipped = leftFormatted.split('\n').length > 3000 || rightFormatted.split('\n').length > 3000;
+    } catch {
+      statsSkipped = false;
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col relative overflow-hidden">
@@ -123,7 +139,7 @@ const Index = () => {
                 <CurlInput onSubmit={handleCompare} isLoading={isLoading} />
                 {result && (result.original.success && result.localhost.success ? (
                   <>
-                    <SummaryCard original={result.original} localhost={result.localhost} hasDifferences={bodyDiff?.hasDifferences ?? false} />
+                    <SummaryCard original={result.original} localhost={result.localhost} hasDifferences={bodyDiff?.hasDifferences ?? false} statsSkipped={statsSkipped} />
                     <DiffViewer original={result.original} localhost={result.localhost} />
                   </>
                 ) : (
