@@ -182,21 +182,38 @@ export function findStructuralMatches(
     }
   }
   
-  // Third pass: match key-value pairs even if at different positions
+  // Third pass: match key-value pairs even if at different positions.
+  // Build an index of right-side lines by key so we only iterate candidates
+  // that share the key, instead of scanning all N right lines per left line.
+  const rightByKey = new Map<string, number[]>();
+  for (let j = 0; j < rightStructured.length; j++) {
+    const k = rightStructured[j].key;
+    if (!k) continue;
+    let bucket = rightByKey.get(k);
+    if (!bucket) {
+      bucket = [];
+      rightByKey.set(k, bucket);
+    }
+    bucket.push(j);
+  }
+
   for (let i = 0; i < leftStructured.length; i++) {
     if (matches.has(i)) continue;
-    
+
     const leftLine = leftStructured[i];
     if (!leftLine.key) continue;
-    
-    // Find matching key in right side
-    for (let j = 0; j < rightStructured.length; j++) {
+
+    const candidates = rightByKey.get(leftLine.key);
+    if (!candidates) continue;
+
+    // Iterate only right indexes that share the key. Preserve original
+    // tiebreaker: first unmatched candidate (insertion order = ascending index).
+    for (const j of candidates) {
       if (usedRight.has(j)) continue;
-      
+
       const rightLine = rightStructured[j];
-      
-      if (leftLine.key === rightLine.key &&
-          leftLine.value === rightLine.value &&
+
+      if (leftLine.value === rightLine.value &&
           Math.abs(leftLine.indent - rightLine.indent) <= 1) {
         matches.set(i, j);
         usedRight.add(j);
@@ -204,7 +221,7 @@ export function findStructuralMatches(
       }
     }
   }
-  
+
   return matches;
 }
 
