@@ -112,6 +112,10 @@ function normalizeLine(line: string, config?: ComparisonConfig): string {
   return normalized.trimEnd();
 }
 
+// Skip expensive per-line scans (similarity refinement and pass 3 of
+// findStructuralMatches) once either side exceeds this many lines.
+const MAX_LINES_FOR_SIMILARITY = 1500;
+
 /**
  * Find matching lines based on structure, not just position
  */
@@ -183,41 +187,50 @@ export function findStructuralMatches(
   }
   
   // Third pass: match key-value pairs even if at different positions.
-  // Build an index of right-side lines by key so we only iterate candidates
-  // that share the key, instead of scanning all N right lines per left line.
-  const rightByKey = new Map<string, number[]>();
-  for (let j = 0; j < rightStructured.length; j++) {
-    const k = rightStructured[j].key;
-    if (!k) continue;
-    let bucket = rightByKey.get(k);
-    if (!bucket) {
-      bucket = [];
-      rightByKey.set(k, bucket);
+  // Skip entirely for very large inputs — the index build itself is O(N)
+  // and pass 3's contribution is marginal vs the cost on huge YAML/config
+  // payloads. Mirrors the MAX_LINES_FOR_SIMILARITY gate in computeStructuralDiff.
+  const skipSimilarity =
+    leftStructured.length > MAX_LINES_FOR_SIMILARITY ||
+    rightStructured.length > MAX_LINES_FOR_SIMILARITY;
+
+  if (!skipSimilarity) {
+    // Build an index of right-side lines by key so we only iterate candidates
+    // that share the key, instead of scanning all N right lines per left line.
+    const rightByKey = new Map<string, number[]>();
+    for (let j = 0; j < rightStructured.length; j++) {
+      const k = rightStructured[j].key;
+      if (!k) continue;
+      let bucket = rightByKey.get(k);
+      if (!bucket) {
+        bucket = [];
+        rightByKey.set(k, bucket);
+      }
+      bucket.push(j);
     }
-    bucket.push(j);
-  }
 
-  for (let i = 0; i < leftStructured.length; i++) {
-    if (matches.has(i)) continue;
+    for (let i = 0; i < leftStructured.length; i++) {
+      if (matches.has(i)) continue;
 
-    const leftLine = leftStructured[i];
-    if (!leftLine.key) continue;
+      const leftLine = leftStructured[i];
+      if (!leftLine.key) continue;
 
-    const candidates = rightByKey.get(leftLine.key);
-    if (!candidates) continue;
+      const candidates = rightByKey.get(leftLine.key);
+      if (!candidates) continue;
 
-    // Iterate only right indexes that share the key. Preserve original
-    // tiebreaker: first unmatched candidate (insertion order = ascending index).
-    for (const j of candidates) {
-      if (usedRight.has(j)) continue;
+      // Iterate only right indexes that share the key. Preserve original
+      // tiebreaker: first unmatched candidate (insertion order = ascending index).
+      for (const j of candidates) {
+        if (usedRight.has(j)) continue;
 
-      const rightLine = rightStructured[j];
+        const rightLine = rightStructured[j];
 
-      if (leftLine.value === rightLine.value &&
-          Math.abs(leftLine.indent - rightLine.indent) <= 1) {
-        matches.set(i, j);
-        usedRight.add(j);
-        break;
+        if (leftLine.value === rightLine.value &&
+            Math.abs(leftLine.indent - rightLine.indent) <= 1) {
+          matches.set(i, j);
+          usedRight.add(j);
+          break;
+        }
       }
     }
   }
@@ -397,7 +410,7 @@ export function computeStructuralDiff(
   const modifiedPairs = new Map<number, number>(); // Track similar but not identical lines
 
   // Skip expensive similarity search for very large diffs to avoid page crashes
-  const MAX_LINES_FOR_SIMILARITY = 1500;
+  // (uses module-level MAX_LINES_FOR_SIMILARITY shared with findStructuralMatches)
   const skipSimilarity = leftLines.length > MAX_LINES_FOR_SIMILARITY || rightLines.length > MAX_LINES_FOR_SIMILARITY;
 
   // First, find similar lines that should be marked as modified

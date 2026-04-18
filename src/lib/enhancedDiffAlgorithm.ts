@@ -38,8 +38,14 @@ export interface EnhancedDiffResult extends DiffResult {
     addedKeys: number;
     removedKeys: number;
     percentageChanged: number;
+    skipped?: boolean;
   };
 }
+
+// Line-count threshold above which computeDiffStatistics is skipped.
+// Stats collection walks every key and runs deepEqual recursively, which
+// gets expensive on multi-thousand-line JSON.
+const STATS_MAX_LINES = 3000;
 
 // Helper to normalize values for semantic comparison
 function normalizeValue(value: any, options: DiffOptions): any {
@@ -457,14 +463,23 @@ export function computeEnhancedDiff(
       movedProperties.set(change.from as string, change.to as string);
     });
   
-  // Compute statistics if JSON and advanced mode is enabled
-  const statistics = isJson && options.advancedMode !== false ? computeDiffStatistics(leftObj, rightObj, options) : {
-    totalKeys: 0,
-    changedKeys: 0,
-    addedKeys: 0,
-    removedKeys: 0,
-    percentageChanged: 0
-  };
+  // Compute statistics if JSON and advanced mode is enabled.
+  // For very large inputs, skip stats and surface a skipped flag so the UI
+  // can show "Stats unavailable for large diffs" instead of misleading zeros.
+  const leftLineCount = leftText.split('\n').length;
+  const rightLineCount = rightText.split('\n').length;
+  const statsTooLarge = leftLineCount > STATS_MAX_LINES || rightLineCount > STATS_MAX_LINES;
+  const computeStats = isJson && options.advancedMode !== false && !statsTooLarge;
+  const statistics: EnhancedDiffResult['statistics'] = computeStats
+    ? computeDiffStatistics(leftObj, rightObj, options)
+    : {
+        totalKeys: 0,
+        changedKeys: 0,
+        addedKeys: 0,
+        removedKeys: 0,
+        percentageChanged: 0,
+        ...(statsTooLarge && isJson && options.advancedMode !== false ? { skipped: true } : {}),
+      };
   
   // Filter out ignored keys/paths before formatting for diff display
   if (isJson && (options.ignoreKeys?.length || options.ignorePaths?.length)) {
