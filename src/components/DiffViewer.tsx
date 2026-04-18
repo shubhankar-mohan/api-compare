@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,6 +16,7 @@ import {
 } from '@/lib/enhancedDiffAlgorithm';
 import {
   loadRules,
+  saveRules,
   addRule,
   canonicalizeEndpoint,
   type NoiseRule,
@@ -493,6 +494,24 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
     });
   }, []);
 
+  // Forget a rule by direct path (used by `i` toggle when a rule already exists)
+  const handleForgetByPath = useCallback(
+    (path: string) => {
+      if (!endpointKey) return;
+      const existing = loadRules(endpointKey);
+      const next = existing.filter((r) => r.path !== path);
+      const result = saveRules(endpointKey, next);
+      if (!result.ok) {
+        toast({ title: 'Could not forget rule', description: result.error, variant: 'destructive' });
+        return;
+      }
+      setEndpointRules(loadRules(endpointKey));
+      setRulesVersion((v) => v + 1);
+      toast({ title: 'Rule forgotten', description: `DiffChecker no longer ignores ${path}.` });
+    },
+    [endpointKey]
+  );
+
   const headersDiff = useMemo(() => {
     const leftHeaders = formatHeaders(original.headers);
     const rightHeaders = formatHeaders(localhost.headers);
@@ -542,11 +561,68 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
     }
   };
   
+  // ──────────────────────────────────────────────────────────────────────
+  // `i` shortcut — toggle ignore on the currently-focused diff row.
+  //
+  // Scope: only fires when (a) a diff row received focus (focusedLine is
+  // set), AND (b) the active element is one of our row divs (data-focused
+  // attribute) — not the cURL textarea or some other input. This is NOT a
+  // global shortcut. We use a single document-level listener gated by these
+  // conditions to keep the React tree clean.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'i' && e.key !== 'I') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!focusedLine) return;
+
+      // Don't hijack `i` when the user is typing into an input/textarea
+      const active = document.activeElement;
+      if (active) {
+        const tag = active.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (active as HTMLElement).isContentEditable) {
+          return;
+        }
+        // Only fire when the focused element is one of our diff rows
+        const id = (active as HTMLElement).id;
+        if (!id || !id.startsWith('diff-line-')) return;
+      } else {
+        return;
+      }
+
+      // Find the line on the focused side and read its parsed marker info
+      const lines = focusedLine.side === 'left' ? bodyDiff.left : bodyDiff.right;
+      const line = lines[focusedLine.line];
+      if (!line) return;
+      const parsed = parseNoiseMarkers(line.content || '');
+      const fieldKey = parsed.fieldKey;
+      if (!fieldKey) return;
+
+      e.preventDefault();
+      // Build the same wildcard-descendant path we use for chip clicks
+      const path = `$..${fieldKey}`;
+      const existingRule = endpointRules.find((r) => r.path === path);
+      if (existingRule) {
+        handleForgetByPath(path);
+      } else {
+        // Pick a classifier name: prefer rule marker (already applied) →
+        // auto marker (suggestion) → fallback to a string from the field
+        // key (unknown classifier name; will round-trip but won't drive a
+        // classifier-based chip).
+        const markerType =
+          parsed.markers[0]?.type ||
+          (fieldKey.toLowerCase().includes('id') ? 'uuid' : 'trace-id');
+        handleTeach(markerType, fieldKey);
+      }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [focusedLine, bodyDiff, endpointRules, handleTeach, handleForgetByPath]);
+
   // Keyboard navigation for search results
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (searchResults.length === 0) return;
-      
+
       if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         const nextIndex = (currentSearchIndex + 1) % searchResults.length;
