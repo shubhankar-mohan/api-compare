@@ -94,45 +94,69 @@ function shouldIgnorePath(path: string, ignorePaths?: string[]): boolean {
 // Cache for deep equality checks
 const deepEqualCache = new Map<string, boolean>();
 
+// Cap on deepEqualCache size. Cache stores booleans by primitive cacheKey;
+// 10k entries is comfortably small (booleans + short strings) but high
+// enough that real comparisons fit. Mirrors the eviction pattern in
+// diffAlgorithm.ts:84-90.
+const DEEPEQUAL_CACHE_CAP = 10000;
+
+function cacheDeepEqual(key: string, value: boolean): boolean {
+  if (deepEqualCache.size >= DEEPEQUAL_CACHE_CAP) {
+    // Map iteration order is insertion order in JS, so dropping the first
+    // half drops the oldest entries (LRU-ish for primarily-write workloads).
+    const keysToDelete = Array.from(deepEqualCache.keys()).slice(0, DEEPEQUAL_CACHE_CAP / 2);
+    for (const k of keysToDelete) deepEqualCache.delete(k);
+  }
+  deepEqualCache.set(key, value);
+  return value;
+}
+
 // Deep equality check with options
 function deepEqual(a: any, b: any, options: DiffOptions, path: string = ''): boolean {
   // Check if path should be ignored
   if (shouldIgnorePath(path, options.ignorePaths)) {
     return true; // Treat ignored paths as equal
   }
-  
-  // Create cache key for primitive values
+
+  // Create cache key for primitive values (and remember it so we can
+  // populate the cache with the resolved verdict at the end).
+  let primitiveCacheKey: string | null = null;
   if (typeof a !== 'object' || typeof b !== 'object') {
-    const cacheKey = `${path}:${JSON.stringify(a)}:${JSON.stringify(b)}`;
-    if (deepEqualCache.has(cacheKey)) {
-      return deepEqualCache.get(cacheKey)!;
+    primitiveCacheKey = `${path}:${JSON.stringify(a)}:${JSON.stringify(b)}`;
+    if (deepEqualCache.has(primitiveCacheKey)) {
+      return deepEqualCache.get(primitiveCacheKey)!;
     }
   }
-  
+
   // Normalize values
   const normalizedA = normalizeValue(a, options);
   const normalizedB = normalizeValue(b, options);
-  
+
   // Primitive comparison
-  if (normalizedA === normalizedB) return true;
-  
+  if (normalizedA === normalizedB) {
+    return primitiveCacheKey !== null ? cacheDeepEqual(primitiveCacheKey, true) : true;
+  }
+
   // Type check
   if (typeof normalizedA !== typeof normalizedB) {
     // Values are already normalized; if types still differ, they are not equal
-    return false;
+    return primitiveCacheKey !== null ? cacheDeepEqual(primitiveCacheKey, false) : false;
   }
-  
+
   // Null check
-  if (normalizedA === null || normalizedB === null) return normalizedA === normalizedB;
-  
+  if (normalizedA === null || normalizedB === null) {
+    const result = normalizedA === normalizedB;
+    return primitiveCacheKey !== null ? cacheDeepEqual(primitiveCacheKey, result) : result;
+  }
+
   // Array comparison
   if (Array.isArray(normalizedA) && Array.isArray(normalizedB)) {
     if (options.detectArrayMoves && options.arrayKeyField) {
       return compareArraysWithKeys(normalizedA, normalizedB, options, path);
     }
-    
+
     if (normalizedA.length !== normalizedB.length) return false;
-    
+
     for (let i = 0; i < normalizedA.length; i++) {
       if (!deepEqual(normalizedA[i], normalizedB[i], options, `${path}[${i}]`)) {
         return false;
@@ -140,14 +164,14 @@ function deepEqual(a: any, b: any, options: DiffOptions, path: string = ''): boo
     }
     return true;
   }
-  
+
   // Object comparison
   if (typeof normalizedA === 'object' && typeof normalizedB === 'object') {
     const keysA = Object.keys(normalizedA).filter(key => !options.ignoreKeys?.includes(key));
     const keysB = Object.keys(normalizedB).filter(key => !options.ignoreKeys?.includes(key));
-    
+
     if (keysA.length !== keysB.length) return false;
-    
+
     for (const key of keysA) {
       if (!keysB.includes(key)) return false;
       if (!deepEqual(normalizedA[key], normalizedB[key], options, `${path}.${key}`)) {
@@ -156,8 +180,8 @@ function deepEqual(a: any, b: any, options: DiffOptions, path: string = ''): boo
     }
     return true;
   }
-  
-  return false;
+
+  return primitiveCacheKey !== null ? cacheDeepEqual(primitiveCacheKey, false) : false;
 }
 
 // Compare arrays using a key field to detect moves
@@ -602,6 +626,21 @@ export function navigateToPath(
   if (rightMatch !== -1) {
     return { line: rightMatch, side: 'right' };
   }
-  
+
   return null;
 }
+
+// Internal helpers exported for tests only.
+export const __test = {
+  /** Direct deepEqual entrypoint for unit tests of cache eviction. */
+  deepEqual: (a: any, b: any, options: DiffOptions = {}, path = ''): boolean =>
+    deepEqual(a, b, options, path),
+  /** Cache size accessor for unit tests. */
+  deepEqualCacheSize: (): number => deepEqualCache.size,
+  /** Reset cache between tests. */
+  clearDeepEqualCache: (): void => {
+    deepEqualCache.clear();
+  },
+  /** Cap constant for assertions. */
+  DEEPEQUAL_CACHE_CAP,
+};
