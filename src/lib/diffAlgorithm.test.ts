@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { computeDiff, formatJson, clearSimilarityCache } from './diffAlgorithm';
+import { computeEnhancedDiff } from './enhancedDiffAlgorithm';
 
 describe('diffAlgorithm', () => {
   // ──────────────────────────────────────────────
@@ -172,5 +173,68 @@ describe('diffAlgorithm', () => {
       const result = computeDiff(left, right);
       expect(result.hasDifferences).toBe(false);
     });
+  });
+
+  // ──────────────────────────────────────────────
+  // Performance regression: 10k / 20k line JSON via computeEnhancedDiff
+  // ──────────────────────────────────────────────
+  describe('performance - enhanced diff at very large sizes', () => {
+    // Synthetic JSON: array of N objects with `fieldsPerObj` fields each.
+    // ~40% of objects have entirely different field values left vs right.
+    const makeRealisticJson = (objectCount: number, fieldsPerObj = 10) => {
+      const leftArr: Array<Record<string, string>> = [];
+      const rightArr: Array<Record<string, string>> = [];
+      for (let i = 0; i < objectCount; i++) {
+        const sameObj: Record<string, string> = {};
+        const diffObjL: Record<string, string> = {};
+        const diffObjR: Record<string, string> = {};
+        for (let f = 0; f < fieldsPerObj; f++) {
+          sameObj[`field_${f}`] = `value_${i}_${f}`;
+          diffObjL[`field_${f}`] = `left_${i}_${f}`;
+          diffObjR[`field_${f}`] = `right_${i}_${f}`;
+        }
+        if (i % 5 < 2) {
+          leftArr.push(diffObjL);
+          rightArr.push(diffObjR);
+        } else {
+          leftArr.push(sameObj);
+          rightArr.push(sameObj);
+        }
+      }
+      return {
+        left: JSON.stringify(leftArr, null, 2),
+        right: JSON.stringify(rightArr, null, 2),
+      };
+    };
+
+    it('completes 10000-line JSON diff under 3s (computeEnhancedDiff)', () => {
+      clearSimilarityCache();
+      // 1000 objects * 10 fields → ~12k formatted lines
+      const { left, right } = makeRealisticJson(1000, 10);
+
+      const start = performance.now();
+      const result = computeEnhancedDiff(left, right);
+      const elapsed = performance.now() - start;
+
+      // eslint-disable-next-line no-console
+      console.log(`[perf 10k] ${elapsed.toFixed(0)}ms (${left.split('\n').length} lines)`);
+      expect(elapsed).toBeLessThan(3000);
+      expect(result.hasDifferences).toBe(true);
+    }, 30000);
+
+    it('completes 20000-line JSON diff under 8s (computeEnhancedDiff)', () => {
+      clearSimilarityCache();
+      // 2000 objects * 10 fields → ~24k formatted lines
+      const { left, right } = makeRealisticJson(2000, 10);
+
+      const start = performance.now();
+      const result = computeEnhancedDiff(left, right);
+      const elapsed = performance.now() - start;
+
+      // eslint-disable-next-line no-console
+      console.log(`[perf 20k] ${elapsed.toFixed(0)}ms (${left.split('\n').length} lines)`);
+      expect(elapsed).toBeLessThan(8000);
+      expect(result.hasDifferences).toBe(true);
+    }, 60000);
   });
 });
