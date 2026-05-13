@@ -1,4 +1,5 @@
 import { ParsedCurl } from './curlParser';
+import { diagnoseFetchError, ErrorDiagnosis } from './errorDiagnostics';
 
 export interface ApiResponse {
   status: number;
@@ -8,6 +9,7 @@ export interface ApiResponse {
   size: number;
   success: boolean;
   error?: string;
+  diagnosis?: ErrorDiagnosis;
   url: string;
   responseTime?: number; // milliseconds
 }
@@ -90,10 +92,11 @@ export function sanitizeHeadersForFetch(headers: Record<string, string>): Record
 
 async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiResponse> {
   const startTime = performance.now();
+  const sanitizedHeaders = sanitizeHeadersForFetch(parsed.headers);
   try {
     const fetchOptions: RequestInit = {
       method: parsed.method,
-      headers: sanitizeHeadersForFetch(parsed.headers),
+      headers: sanitizedHeaders,
       mode: 'cors',
     };
 
@@ -122,20 +125,8 @@ async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiRespo
       responseTime,
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-
-    const isHttpsPage =
-      typeof window !== 'undefined' &&
-      typeof window.location !== 'undefined' &&
-      window.location.protocol === 'https:';
-
-    // When the app is served over HTTPS, browsers often block HTTP localhost calls as "Mixed Content".
-    const enhancedError =
-      isHttpsPage && url.startsWith('http://')
-        ? 'Blocked by browser (mixed content): this page is HTTPS but your localhost URL is HTTP. Use https://localhost (recommended) or run this app locally over http://.'
-        : errorMessage === 'Failed to fetch'
-          ? 'Failed to fetch (CORS, mixed content, or server not reachable).'
-          : errorMessage;
+    const err = error instanceof Error ? error : new Error('Unknown error occurred');
+    const diagnosis = await diagnoseFetchError(url, sanitizedHeaders, err);
 
     return {
       status: 0,
@@ -144,9 +135,29 @@ async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiRespo
       body: '',
       size: 0,
       success: false,
-      error: enhancedError,
+      error: errorMessageForKind(diagnosis),
+      diagnosis,
       url,
     };
+  }
+}
+
+function errorMessageForKind(d: ErrorDiagnosis): string {
+  switch (d.kind) {
+    case 'cors':
+      return 'Blocked by browser CORS. The server is reachable but your origin / headers are not on its allow-list.';
+    case 'mixed-content':
+      return 'Blocked by browser (mixed content): this page is HTTPS but the target URL is HTTP.';
+    case 'offline':
+      return "You're offline. Reconnect and retry.";
+    case 'unreachable':
+      return 'Server not reachable (DNS, TLS, or network error).';
+    case 'bad-url':
+      return 'Invalid URL.';
+    case 'timeout':
+      return 'Request timed out.';
+    default:
+      return d.details.rawError || 'Failed to fetch.';
   }
 }
 
