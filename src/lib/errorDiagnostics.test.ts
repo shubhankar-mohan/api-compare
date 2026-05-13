@@ -28,7 +28,7 @@ describe('diagnoseFetchError', () => {
   });
 
   it('classifies invalid URLs as bad-url', async () => {
-    const d = await diagnoseFetchError('not a url', {}, new Error('Failed to fetch'));
+    const d = await diagnoseFetchError('not a url', 'GET', {}, new Error('Failed to fetch'));
     expect(d.kind).toBe('bad-url');
     expect(d.details.targetOrigin).toBeNull();
   });
@@ -37,6 +37,7 @@ describe('diagnoseFetchError', () => {
     setOrigin('https://app.example.com');
     const d = await diagnoseFetchError(
       'http://localhost:8080/api',
+      'GET',
       {},
       new Error('Failed to fetch'),
     );
@@ -48,6 +49,7 @@ describe('diagnoseFetchError', () => {
     setOnline(false);
     const d = await diagnoseFetchError(
       'https://api.example.com/x',
+      'GET',
       {},
       new Error('Failed to fetch'),
     );
@@ -58,6 +60,7 @@ describe('diagnoseFetchError', () => {
   it('classifies AbortError as timeout', async () => {
     const d = await diagnoseFetchError(
       'https://api.example.com/x',
+      'GET',
       {},
       new Error('The operation was aborted.'),
     );
@@ -68,6 +71,7 @@ describe('diagnoseFetchError', () => {
     mockFetch.mockResolvedValueOnce({ status: 0, type: 'opaque' });
     const d = await diagnoseFetchError(
       'https://api.example.com/x',
+      'POST',
       { 'Content-Type': 'application/json', 'X-User-Id': 'abc' },
       new Error('Failed to fetch'),
     );
@@ -81,6 +85,7 @@ describe('diagnoseFetchError', () => {
     mockFetch.mockRejectedValueOnce(new Error('Failed to fetch'));
     const d = await diagnoseFetchError(
       'https://api.nonexistent.tld/x',
+      'GET',
       {},
       new Error('Failed to fetch'),
     );
@@ -92,6 +97,7 @@ describe('diagnoseFetchError', () => {
     mockFetch.mockResolvedValueOnce({ status: 0, type: 'opaque' });
     const d = await diagnoseFetchError(
       'https://api.example.com/x',
+      'POST',
       {
         Accept: 'application/json',
         Authorization: 'Bearer x',

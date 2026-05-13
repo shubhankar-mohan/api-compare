@@ -126,7 +126,7 @@ async function executeRequest(url: string, parsed: ParsedCurl): Promise<ApiRespo
     };
   } catch (error) {
     const err = error instanceof Error ? error : new Error('Unknown error occurred');
-    const diagnosis = await diagnoseFetchError(url, sanitizedHeaders, err);
+    const diagnosis = await diagnoseFetchError(url, parsed.method, sanitizedHeaders, err);
 
     return {
       status: 0,

@@ -17,6 +17,7 @@ export interface ErrorDiagnosis {
   kind: ErrorKind;
   details: {
     url: string;
+    method: string;
     targetOrigin: string | null;
     pageOrigin: string;
     isMixedContent: boolean;
@@ -96,6 +97,7 @@ function suspectUnallowedHeaders(sent: Record<string, string>): string[] {
 
 export async function diagnoseFetchError(
   url: string,
+  method: string,
   sentHeaders: Record<string, string>,
   rawError: Error,
 ): Promise<ErrorDiagnosis> {
@@ -106,19 +108,25 @@ export async function diagnoseFetchError(
   const likelyUnallowedHeaders = suspectUnallowedHeaders(sentHeaders);
   const rawMessage = rawError.message || String(rawError);
 
+  const baseDetails = {
+    url,
+    method,
+    targetOrigin,
+    pageOrigin: origin,
+    sentHeaders: sentHeaderNames,
+    likelyUnallowedHeaders,
+    rawError: rawMessage,
+  };
+
   if (!parsed) {
     return {
       kind: 'bad-url',
       details: {
-        url,
+        ...baseDetails,
         targetOrigin: null,
-        pageOrigin: origin,
         isMixedContent: false,
         isOnline: isOnline(),
         reachable: null,
-        sentHeaders: sentHeaderNames,
-        likelyUnallowedHeaders,
-        rawError: rawMessage,
       },
     };
   }
@@ -131,15 +139,10 @@ export async function diagnoseFetchError(
     return {
       kind: 'mixed-content',
       details: {
-        url,
-        targetOrigin,
-        pageOrigin: origin,
+        ...baseDetails,
         isMixedContent: true,
         isOnline: isOnline(),
         reachable: null,
-        sentHeaders: sentHeaderNames,
-        likelyUnallowedHeaders,
-        rawError: rawMessage,
       },
     };
   }
@@ -148,15 +151,10 @@ export async function diagnoseFetchError(
     return {
       kind: 'offline',
       details: {
-        url,
-        targetOrigin,
-        pageOrigin: origin,
+        ...baseDetails,
         isMixedContent: false,
         isOnline: false,
         reachable: null,
-        sentHeaders: sentHeaderNames,
-        likelyUnallowedHeaders,
-        rawError: rawMessage,
       },
     };
   }
@@ -165,15 +163,10 @@ export async function diagnoseFetchError(
     return {
       kind: 'timeout',
       details: {
-        url,
-        targetOrigin,
-        pageOrigin: origin,
+        ...baseDetails,
         isMixedContent: false,
         isOnline: true,
         reachable: null,
-        sentHeaders: sentHeaderNames,
-        likelyUnallowedHeaders,
-        rawError: rawMessage,
       },
     };
   }
@@ -185,15 +178,10 @@ export async function diagnoseFetchError(
   return {
     kind: reachable ? 'cors' : 'unreachable',
     details: {
-      url,
-      targetOrigin,
-      pageOrigin: origin,
+      ...baseDetails,
       isMixedContent: false,
       isOnline: true,
       reachable,
-      sentHeaders: sentHeaderNames,
-      likelyUnallowedHeaders,
-      rawError: rawMessage,
     },
   };
 }

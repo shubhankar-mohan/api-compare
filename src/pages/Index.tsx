@@ -3,6 +3,7 @@ import { CurlInput } from '@/components/CurlInput';
 import { SummaryCard } from '@/components/SummaryCard';
 import { DiffViewer } from '@/components/DiffViewer';
 import { TroubleshootSection } from '@/components/TroubleshootSection';
+import { CorsErrorCard } from '@/components/CorsErrorCard';
 import { CurlDiffLogo } from '@/components/CurlDiffLogo';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { AppTabs, AppMode } from '@/components/AppTabs';
@@ -143,7 +144,27 @@ const Index = () => {
                     <DiffViewer original={result.original} localhost={result.localhost} />
                   </>
                 ) : (
-                  <TroubleshootSection original={result.original} localhost={result.localhost} />
+                  <div className="space-y-4">
+                    {!result.original.success && (
+                      <CorsErrorCard
+                        label="Original"
+                        response={result.original}
+                        onSwitchToTextDiff={() => setMode('text-diff')}
+                      />
+                    )}
+                    {!result.localhost.success && (
+                      <CorsErrorCard
+                        label="Localhost"
+                        response={result.localhost}
+                        onSwitchToTextDiff={() => setMode('text-diff')}
+                      />
+                    )}
+                    {/* Keep the old troubleshoot section as a fallback for non-diagnosed failures */}
+                    {(!result.original.diagnosis && !result.original.success) ||
+                    (!result.localhost.diagnosis && !result.localhost.success) ? (
+                      <TroubleshootSection original={result.original} localhost={result.localhost} />
+                    ) : null}
+                  </div>
                 ))}
                 {!result && !isLoading && (
                   <div className="text-center py-10 px-4">
