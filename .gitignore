@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Claude Code local state: settings plus agent worktrees, which are full
+# duplicate checkouts of this repo (~6 MB). Tooling state, not source.
+.claude/
