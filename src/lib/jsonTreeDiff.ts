@@ -956,6 +956,40 @@ function walkArrays(l: unknown[], r: unknown[], ctx: WalkCtx, s: WalkState): voi
   s.b.pair(`${p}]${ctx.leftComma ? ',' : ''}`, `${p}]${ctx.rightComma ? ',' : ''}`, false);
 }
 
+/**
+ * Number of lines `renderLines` would produce, without producing them.
+ *
+ * The entry point used to render both documents in full just to decide
+ * whether inline segments are affordable, and then rendered them again
+ * during the walk. This is the same count, iterative and allocation-free:
+ * a scalar or empty container is one line, any other container is its
+ * opening and closing lines plus its children.
+ */
+function countRenderedRows(value: unknown): number {
+  let rows = 0;
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const v = stack.pop();
+    if (Array.isArray(v)) {
+      if (v.length === 0) rows += 1;
+      else {
+        rows += 2;
+        for (const el of v) stack.push(el);
+      }
+    } else if (v !== null && typeof v === 'object') {
+      const keys = Object.keys(v as Record<string, unknown>);
+      if (keys.length === 0) rows += 1;
+      else {
+        rows += 2;
+        for (const k of keys) stack.push((v as Record<string, unknown>)[k]);
+      }
+    } else {
+      rows += 1;
+    }
+  }
+  return rows;
+}
+
 // ── entry point ────────────────────────────────────────────────────────────
 
 /**
@@ -972,9 +1006,7 @@ export function computeJsonTreeDiff(
   const sortKeys = options.sortKeys !== false;
 
   // Estimating size up front is cheaper than unwinding a huge diff halfway.
-  const estimatedRows =
-    renderLines(leftValue, { depth: 0, key: null, comma: false, path: '$' }, sortKeys).length +
-    renderLines(rightValue, { depth: 0, key: null, comma: false, path: '$' }, sortKeys).length;
+  const estimatedRows = countRenderedRows(leftValue) + countRenderedRows(rightValue);
 
   const state: WalkState = {
     b: new RowBuilder(),

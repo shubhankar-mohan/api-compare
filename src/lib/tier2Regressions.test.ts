@@ -209,3 +209,24 @@ describe('G: precision detection runs before any JSON round-trip', () => {
     expect(e.warnings?.length, 'early exit dropped the warning').toBeGreaterThan(0);
   });
 });
+
+// ── C2 · inline segments switch off at the row cap, on either side of it ──
+
+describe('C2: inline segment cap is measured in rendered rows', () => {
+  // A flat object with n fields renders as n + 2 rows per side.
+  const flat = (n: number, v: string) => {
+    const o: Record<string, string> = {};
+    for (let i = 0; i < n; i++) o[`f${i}`] = `${v}${i}`;
+    return JSON.stringify(o);
+  };
+  const hasSegments = (d: ReturnType<typeof computeDiff>) =>
+    d.left.some((l) => l.type === 'modified' && (l.segments?.length ?? 0) > 0);
+
+  it('just under the cap (2998 fields = 6000 rows) rows carry segments', () => {
+    expect(hasSegments(computeDiff(flat(2998, 'a'), flat(2998, 'b')))).toBe(true);
+  });
+
+  it('just over the cap (2999 fields = 6002 rows) rows carry no segments', () => {
+    expect(hasSegments(computeDiff(flat(2999, 'a'), flat(2999, 'b')))).toBe(false);
+  });
+});
