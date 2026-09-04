@@ -4,6 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { computeJsonTreeDiff } from './jsonTreeDiff';
+import { calculateSimilarity, clearSimilarityCache } from './inlineSegments';
 
 // ── A · options apply to array elements exactly as they do to object fields ─
 
@@ -100,5 +101,47 @@ describe('B: inline segments are computed on the value span', () => {
     const { l, r } = modifiedRow({ a: 'x', b: 1 }, { a: 'y', b: 1 });
     expect((l.segments ?? []).map((s) => s.text).join('')).toBe(l.content);
     expect((r.segments ?? []).map((s) => s.text).join('')).toBe(r.content);
+  });
+});
+
+// ── C · similarity scores are correct, cached or not ───────────────────────
+
+describe('C: calculateSimilarity is not fooled by its own cache', () => {
+  const head = 'A'.repeat(50);
+  const tail = 'Z'.repeat(50);
+  const base = head + 'x'.repeat(100) + tail;
+
+  it('two lines that differ only in the middle do not share a cached score', () => {
+    clearSimilarityCache();
+    const allDifferent = head + 'y'.repeat(100) + tail;
+    const oneChar = head + 'x'.repeat(99) + 'q' + tail;
+    expect(calculateSimilarity(base, allDifferent)).toBeCloseTo(0.5, 1);
+    // Same length, same first 50, same last 50 as `allDifferent` — the old
+    // sampled cache key collided and returned 0.5 for a near-identical pair.
+    expect(calculateSimilarity(base, oneChar)).toBeGreaterThan(0.99);
+  });
+
+  it('a half-changed middle scores 0.75, not the score of an earlier collision', () => {
+    clearSimilarityCache();
+    calculateSimilarity(base, head + 'y'.repeat(100) + tail);
+    const halfChanged = head + 'x'.repeat(50) + 'y'.repeat(50) + tail;
+    expect(calculateSimilarity(base, halfChanged)).toBeCloseTo(0.75, 1);
+  });
+
+  it('lines beyond the Levenshtein cap are scored on their sampled ends, not inflated', () => {
+    clearSimilarityCache();
+    const common = 'c'.repeat(1700);
+    const a = 'A'.repeat(300) + common;
+    const b = 'B'.repeat(300) + common;
+    // The start differs entirely and the end is identical; the old formula
+    // divided a capped distance by the full length and reported 0.85.
+    expect(calculateSimilarity(a, b)).toBeCloseTo(0.5, 1);
+  });
+
+  it('identical long lines still score 1 and unrelated long lines still score ~0', () => {
+    clearSimilarityCache();
+    const a = 'a'.repeat(2000);
+    expect(calculateSimilarity(a, 'a'.repeat(2000))).toBe(1);
+    expect(calculateSimilarity(a, 'b'.repeat(2000))).toBeLessThan(0.05);
   });
 });

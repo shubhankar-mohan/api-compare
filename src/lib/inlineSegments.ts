@@ -75,28 +75,43 @@ export function levenshteinDistance(str1: string, str2: string): number {
 const similarityCache = new Map<string, number>();
 const SIMILARITY_CACHE_CAP = 1000;
 
-/** Normalized similarity in [0,1]. Cached; cache is halved when it fills. */
+/**
+ * The part of a line that similarity is measured on.
+ *
+ * Levenshtein is capped at `LEVENSHTEIN_MAX` characters, and the score used
+ * to divide that capped distance by the *full* length — so any two lines over
+ * ~2000 characters scored at least 0.85 however different they were, and were
+ * paired as an edit. Over the cap, the score now compares the first and last
+ * `LEVENSHTEIN_MAX / 2` characters and says so here: it is a similarity of
+ * the ends, which is honest about what was actually measured.
+ */
+function similaritySample(s: string): string {
+  if (s.length <= LEVENSHTEIN_MAX) return s;
+  const half = LEVENSHTEIN_MAX / 2;
+  return s.slice(0, half) + s.slice(-half);
+}
+
+/**
+ * Normalized similarity in [0,1]. Cached; cache is halved when it fills.
+ *
+ * The cache is keyed by the full strings. It used to be keyed by length plus
+ * the first and last 50 characters, so two lines that differed only in the
+ * middle shared a key and the second got the first one's score (measured:
+ * a true 0.995 returned as 0.5). That score decides whether a delete/insert
+ * pair is shown as one edited row, so a collision changed the picture.
+ */
 export function calculateSimilarity(str1: string, str2: string): number {
   if (str1 === str2) return 1;
   if (!str1 || !str2) return 0;
 
-  const sample1 =
-    str1.length <= 100
-      ? str1
-      : `${str1.length}:${str1.substring(0, 50)}:${str1.substring(str1.length - 50)}`;
-  const sample2 =
-    str2.length <= 100
-      ? str2
-      : `${str2.length}:${str2.substring(0, 50)}:${str2.substring(str2.length - 50)}`;
-  const cacheKey = `${sample1}|||${sample2}`;
-
+  const cacheKey = `${str1}\u0000${str2}`;
   const cached = similarityCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
-  const longer = str1.length > str2.length ? str1 : str2;
-  const shorter = str1.length > str2.length ? str2 : str1;
-  if (longer.length === 0) return 1;
-
+  const a = similaritySample(str1);
+  const b = similaritySample(str2);
+  const longer = a.length > b.length ? a : b;
+  const shorter = a.length > b.length ? b : a;
   const similarity = (longer.length - levenshteinDistance(longer, shorter)) / longer.length;
 
   if (similarityCache.size > SIMILARITY_CACHE_CAP) {
