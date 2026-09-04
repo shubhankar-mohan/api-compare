@@ -5,6 +5,12 @@
 import { describe, it, expect } from 'vitest';
 import { computeJsonTreeDiff } from './jsonTreeDiff';
 import { calculateSimilarity, clearSimilarityCache } from './inlineSegments';
+import {
+  computeEnhancedDiff,
+  navigateToPath,
+  searchInDiff,
+  type EnhancedDiffResult,
+} from './enhancedDiffAlgorithm';
 
 // ── A · options apply to array elements exactly as they do to object fields ─
 
@@ -143,5 +149,169 @@ describe('C: calculateSimilarity is not fooled by its own cache', () => {
     const a = 'a'.repeat(2000);
     expect(calculateSimilarity(a, 'a'.repeat(2000))).toBe(1);
     expect(calculateSimilarity(a, 'b'.repeat(2000))).toBeLessThan(0.05);
+  });
+});
+
+// ── D · pairing inside a delete/insert run is by similarity, in order ──────
+
+describe('D: edits inside a delete/insert run pair by similarity, preserving order', () => {
+  const readBack = (rows: { type: string; content: string }[]) =>
+    JSON.parse(rows.filter((l) => l.type !== 'empty').map((l) => l.content).join('\n'));
+  const count = (rows: { type: string }[], type: string) => rows.filter((l) => l.type === type).length;
+
+  it('a removed record before an edited one no longer hides the edit', () => {
+    // Positional pairing matched A with B' and B with C, both below the
+    // threshold, so all four records rendered whole with no inline highlight.
+    const left = [
+      { n: 'a', p: 1, q: 1, r: 1 },
+      { n: 'b', p: 2, q: 2, r: 2 },
+    ];
+    const right = [
+      { n: 'b', p: 2, q: 2, r: 3 },
+      { n: 'c', p: 9, q: 9, r: 9 },
+    ];
+    const d = computeJsonTreeDiff(left, right);
+    expect(count(d.left, 'modified'), 'the b→b edit should be one modified row').toBe(1);
+    expect(count(d.left, 'removed'), 'record a removed whole').toBe(6);
+    expect(count(d.right, 'added'), 'record c added whole').toBe(6);
+    expect(readBack(d.left)).toEqual(left);
+    expect(readBack(d.right)).toEqual(right);
+  });
+
+  it('a swap with edits keeps each pane in its own order (I1) and still finds one edit', () => {
+    const left = [
+      { n: 'a', p: 1, q: 1, r: 1 },
+      { n: 'b', p: 2, q: 2, r: 2 },
+    ];
+    const right = [
+      { n: 'b', p: 2, q: 2, r: 3 },
+      { n: 'a', p: 1, q: 1, r: 9 },
+    ];
+    const d = computeJsonTreeDiff(left, right);
+    expect(count(d.left, 'modified')).toBe(1);
+    expect(readBack(d.left)).toEqual(left);
+    expect(readBack(d.right)).toEqual(right);
+  });
+
+  it('positionally aligned edits still pair one to one', () => {
+    const left = [
+      { n: 'a', p: 1, q: 1, r: 1 },
+      { n: 'b', p: 2, q: 2, r: 2 },
+    ];
+    const right = [
+      { n: 'a', p: 1, q: 1, r: 8 },
+      { n: 'b', p: 2, q: 2, r: 9 },
+    ];
+    const d = computeJsonTreeDiff(left, right);
+    expect(count(d.left, 'modified')).toBe(2);
+    expect(d.additions).toBe(2);
+    expect(d.removals).toBe(2);
+  });
+
+  it('a very long run of unrelated records stays fast', () => {
+    const left = Array.from({ length: 3000 }, (_, i) => ({ n: `l${i}`, v: i }));
+    const right = Array.from({ length: 3000 }, (_, i) => ({ n: `r${i}`, v: -i }));
+    const t0 = Date.now();
+    computeJsonTreeDiff(left, right);
+    expect(Date.now() - t0).toBeLessThan(3000);
+  });
+});
+
+// ── E · numeric epoch timestamps get a noise suggestion ────────────────────
+
+describe('E: numeric epoch values under a time-like key are suggested as noise', () => {
+  const suggestion = (left: unknown, right: unknown) => {
+    const d = computeJsonTreeDiff(left, right);
+    const row = d.right.find((l) => l.type === 'modified');
+    return row?.noise ?? null;
+  };
+
+  it('createdAt as epoch millis (number) is suggested', () => {
+    expect(suggestion({ createdAt: 1717000000000 }, { createdAt: 1717000001000 })).toEqual({
+      type: 'epoch-millis',
+      source: 'auto',
+    });
+  });
+
+  it('expires_at as epoch seconds (number) is suggested', () => {
+    expect(suggestion({ expires_at: 1717000000 }, { expires_at: 1717000060 })).toEqual({
+      type: 'epoch-millis',
+      source: 'auto',
+    });
+  });
+
+  it('a 13-digit number under a non-temporal key is not suggested', () => {
+    expect(suggestion({ orderId: 1234567890123 }, { orderId: 1234567890124 })).toBeNull();
+  });
+
+  it('a small number under a time-like key is not suggested', () => {
+    expect(suggestion({ retryAfterSeconds: 30 }, { retryAfterSeconds: 60 })).toBeNull();
+  });
+
+  it('the string form still gets the same suggestion', () => {
+    expect(suggestion({ createdAt: '1717000000000' }, { createdAt: '1717000001000' })).toEqual({
+      type: 'epoch-millis',
+      source: 'auto',
+    });
+  });
+});
+
+// ── F · Go to Path is exact and never throws ──────────────────────────────
+
+describe('F: navigateToPath resolves the exact row and tolerates any key', () => {
+  const contentAt = (d: EnhancedDiffResult, hit: { line: number; side: 'left' | 'right' } | null) =>
+    hit ? d[hit.side][hit.line].content : null;
+
+  it('finds the row for the full path, not the first key with the same name', () => {
+    const d = computeEnhancedDiff('{"a":{"id":1},"b":{"id":2}}', '{"a":{"id":1},"b":{"id":3}}');
+    expect(contentAt(d, navigateToPath(d, '$.b.id'))).toContain('"id": 2');
+    expect(contentAt(d, navigateToPath(d, '$.a.id'))).toContain('"id": 1');
+  });
+
+  it('resolves an array index in the path', () => {
+    const d = computeEnhancedDiff(
+      '{"items":[{"sku":"A"},{"sku":"B"}]}',
+      '{"items":[{"sku":"A"},{"sku":"C"}]}'
+    );
+    expect(contentAt(d, navigateToPath(d, '$.items[1].sku'))).toContain('"sku": "B"');
+  });
+
+  it('accepts a path without the leading $', () => {
+    const d = computeEnhancedDiff('{"a":{"id":1},"b":{"id":2}}', '{"a":{"id":1},"b":{"id":3}}');
+    expect(contentAt(d, navigateToPath(d, 'b.id'))).toContain('"id": 2');
+  });
+
+  it('does not throw on keys containing regex metacharacters', () => {
+    const d = computeEnhancedDiff('{"a[b":1,"c(d":2}', '{"a[b":9,"c(d":2}');
+    expect(() => navigateToPath(d, '$.a[b')).not.toThrow();
+    expect(contentAt(d, navigateToPath(d, '$.a[b'))).toContain('"a[b": 1');
+    expect(() => navigateToPath(d, '$.c(d')).not.toThrow();
+  });
+
+  it('falls back to a literal key search for non-JSON diffs without throwing', () => {
+    const d = computeEnhancedDiff('name: a(b\nkind: x', 'name: a(b\nkind: y');
+    expect(() => navigateToPath(d, '$.a(b')).not.toThrow();
+  });
+
+  it('returns null for a path that is not present', () => {
+    const d = computeEnhancedDiff('{"a":1}', '{"a":2}');
+    expect(navigateToPath(d, '$.zzz')).toBeNull();
+  });
+});
+
+describe('F: searchInDiff reports an invalid regular expression instead of throwing raw', () => {
+  it('throws a message that names the problem exactly once', () => {
+    const d = computeEnhancedDiff('{"a":1}', '{"a":2}');
+    let message = '';
+    try {
+      searchInDiff(d, '(', { regex: true });
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toMatch(/invalid regular expression/i);
+    // The engine's own message already starts with these words; the toast
+    // read "Invalid regular expression: Invalid regular expression: /(/gi".
+    expect(message.match(/invalid regular expression/gi)?.length).toBe(1);
+    expect(message).toContain('Unterminated group');
   });
 });

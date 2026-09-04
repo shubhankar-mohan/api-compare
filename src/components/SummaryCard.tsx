@@ -15,8 +15,9 @@ import { ApiResponse } from '@/lib/requestExecutor';
 interface SummaryCardProps {
   original: ApiResponse;
   localhost: ApiResponse;
-  hasDifferences: boolean;
-  /** True when computeDiffStatistics was skipped due to input size. */
+  /** null until the diff viewer has reported its verdict. */
+  hasDifferences: boolean | null;
+  /** True when statistics were skipped due to input size (STATS_MAX_LINES). */
   statsSkipped?: boolean;
 }
 
@@ -143,7 +144,12 @@ export function SummaryCard({ original, localhost, hasDifferences, statsSkipped 
             </div>
           </div>
           <div>
-            {hasDifferences ? (
+            {hasDifferences === null ? (
+              <Badge variant="secondary" className="gap-1.5 px-4 py-1.5 text-sm">
+                <Clock className="h-4 w-4" />
+                Comparing…
+              </Badge>
+            ) : hasDifferences ? (
               <Badge variant="destructive" className="gap-1.5 px-4 py-1.5 text-sm">
                 <FileText className="h-4 w-4" />
                 Differences Found

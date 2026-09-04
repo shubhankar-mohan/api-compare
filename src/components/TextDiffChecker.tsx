@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { computeDiff, formatJson, DiffLine, DiffSegment, ComparisonConfig } from '@/lib/diffAlgorithm';
-import { computeStructuralDiff } from '@/lib/structuralDiff';
 import {
   computeEnhancedDiff,
   DiffOptions,
@@ -355,11 +354,6 @@ export function TextDiffChecker() {
       return computeEnhancedDiff(left, right, diffOptions) as EnhancedDiffResult;
     }
 
-    // Use structural diff for YAML files to handle missing fields better
-    if (formatType === 'yaml') {
-      return computeStructuralDiff(left, right, config);
-    }
-
     return computeDiff(left, right, { advancedMode: true, config });
   }, [leftText, rightText, shouldShowDiff, isJson, leftFileName, rightFileName, diffOptions]);
 
@@ -397,7 +391,13 @@ export function TextDiffChecker() {
   // Handle search in diff
   const handleSearch = (query: string, options: { caseSensitive?: boolean; regex?: boolean }) => {
     if (!diff) return;
-    const results = searchInDiff(diff as EnhancedDiffResult, query, options);
+    let results: ReturnType<typeof searchInDiff>;
+    try {
+      results = searchInDiff(diff as EnhancedDiffResult, query, options);
+    } catch (err) {
+      toast({ title: 'Search failed', description: String(err instanceof Error ? err.message : err), variant: 'destructive' });
+      return;
+    }
     setSearchResults(results);
     setCurrentSearchIndex(0);
     if (results.length > 0) {

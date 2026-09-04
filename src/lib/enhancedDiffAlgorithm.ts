@@ -45,9 +45,8 @@ export interface EnhancedDiffResult extends DiffResult {
   };
 }
 
-// Line-count threshold above which computeDiffStatistics is skipped.
-// Stats collection walks every key and runs deepEqual recursively, which
-// gets expensive on multi-thousand-line JSON.
+// Line-count threshold above which statistics are skipped and `skipped` is
+// set, so the UI can say so instead of showing misleading zeros.
 const STATS_MAX_LINES = 3000;
 
 // Helper to normalize values for semantic comparison
@@ -64,182 +63,17 @@ function normalizeValue(value: any, options: DiffOptions): any {
     if (value === 'null') return null;
   }
   
-  if (options.ignoreCase && typeof value === 'string') {
-    return value.toLowerCase();
+  if (typeof value === 'string') {
+    if (options.ignoreWhitespace) value = value.replace(/\s+/g, ' ').trim();
+    if (options.ignoreCase) value = value.toLowerCase();
   }
-  
-  if (options.ignoreWhitespace && typeof value === 'string') {
-    return value.replace(/\s+/g, ' ').trim();
-  }
-  
+
   return value;
 }
 
 // Check if a path should be ignored
 /**
- * Normalize a JSONPath-ish string to the shape `collectKeys` produces:
- * no leading `import { DiffLine, DiffSegment, DiffResult, computeDiff, clearSimilarityCache } from './diffAlgorithm';
-import { assertDepthWithinLimit } from './jsonTreeDiff';
-import { precisionWarnings } from './diffAlgorithm';
-import type { NoiseRule } from './noiseRules';
-
-export interface DiffOptions {
-  // Performance options
-  advancedMode?: boolean; // Enable character/word-level diffs and structural analysis
-  
-  // Comparison options
-  semanticComparison?: boolean; // Treat "1" and 1 as equal
-  ignoreCase?: boolean;
-  ignoreWhitespace?: boolean;
-  ignoreKeys?: string[];
-  ignorePaths?: string[]; // JSONPath-like: ["$.user.id", "$.timestamp"]
-  
-  // Array comparison
-  detectArrayMoves?: boolean;
-  arrayKeyField?: string; // Field to use as key for array item comparison (e.g., "id")
-  
-  // Display options
-  showOnlyDifferences?: boolean;
-  collapseUnchanged?: boolean;
-}
-
-export interface StructuralChange {
-  type: 'moved' | 'renamed' | 'type_changed' | 'reordered';
-  path: string;
-  from?: string | number;
-  to?: string | number;
-  oldValue?: any;
-  newValue?: any;
-}
-
-export interface EnhancedDiffResult extends DiffResult {
-  structuralChanges: StructuralChange[];
-  movedProperties: Map<string, string>;
-  statistics: {
-    totalKeys: number;
-    changedKeys: number;
-    addedKeys: number;
-    removedKeys: number;
-    percentageChanged: number;
-    skipped?: boolean;
-  };
-}
-
-// Line-count threshold above which computeDiffStatistics is skipped.
-// Stats collection walks every key and runs deepEqual recursively, which
-// gets expensive on multi-thousand-line JSON.
-const STATS_MAX_LINES = 3000;
-
-// Helper to normalize values for semantic comparison
-function normalizeValue(value: any, options: DiffOptions): any {
-  if (options.semanticComparison) {
-    // Convert stringified numbers to numbers
-    if (typeof value === 'string' && !isNaN(Number(value))) {
-      return Number(value);
-    }
-    // Convert stringified booleans to booleans
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    // Convert null strings to null
-    if (value === 'null') return null;
-  }
-  
-  if (options.ignoreCase && typeof value === 'string') {
-    return value.toLowerCase();
-  }
-  
-  if (options.ignoreWhitespace && typeof value === 'string') {
-    return value.replace(/\s+/g, ' ').trim();
-  }
-  
-  return value;
-}
-
-// Check if a path should be ignored
-, no leading `.`.
- *
- * The UI's placeholder and the `DiffOptions` docs both show `$.path.to.thing`,
- * but stripping only the `import { DiffLine, DiffSegment, DiffResult, computeDiff, clearSimilarityCache } from './diffAlgorithm';
-import { assertDepthWithinLimit } from './jsonTreeDiff';
-import { precisionWarnings } from './diffAlgorithm';
-import type { NoiseRule } from './noiseRules';
-
-export interface DiffOptions {
-  // Performance options
-  advancedMode?: boolean; // Enable character/word-level diffs and structural analysis
-  
-  // Comparison options
-  semanticComparison?: boolean; // Treat "1" and 1 as equal
-  ignoreCase?: boolean;
-  ignoreWhitespace?: boolean;
-  ignoreKeys?: string[];
-  ignorePaths?: string[]; // JSONPath-like: ["$.user.id", "$.timestamp"]
-  
-  // Array comparison
-  detectArrayMoves?: boolean;
-  arrayKeyField?: string; // Field to use as key for array item comparison (e.g., "id")
-  
-  // Display options
-  showOnlyDifferences?: boolean;
-  collapseUnchanged?: boolean;
-}
-
-export interface StructuralChange {
-  type: 'moved' | 'renamed' | 'type_changed' | 'reordered';
-  path: string;
-  from?: string | number;
-  to?: string | number;
-  oldValue?: any;
-  newValue?: any;
-}
-
-export interface EnhancedDiffResult extends DiffResult {
-  structuralChanges: StructuralChange[];
-  movedProperties: Map<string, string>;
-  statistics: {
-    totalKeys: number;
-    changedKeys: number;
-    addedKeys: number;
-    removedKeys: number;
-    percentageChanged: number;
-    skipped?: boolean;
-  };
-}
-
-// Line-count threshold above which computeDiffStatistics is skipped.
-// Stats collection walks every key and runs deepEqual recursively, which
-// gets expensive on multi-thousand-line JSON.
-const STATS_MAX_LINES = 3000;
-
-// Helper to normalize values for semantic comparison
-function normalizeValue(value: any, options: DiffOptions): any {
-  if (options.semanticComparison) {
-    // Convert stringified numbers to numbers
-    if (typeof value === 'string' && !isNaN(Number(value))) {
-      return Number(value);
-    }
-    // Convert stringified booleans to booleans
-    if (value === 'true') return true;
-    if (value === 'false') return false;
-    // Convert null strings to null
-    if (value === 'null') return null;
-  }
-  
-  if (options.ignoreCase && typeof value === 'string') {
-    return value.toLowerCase();
-  }
-  
-  if (options.ignoreWhitespace && typeof value === 'string') {
-    return value.replace(/\s+/g, ' ').trim();
-  }
-  
-  return value;
-}
-
-// Check if a path should be ignored
-
-/**
- * Normalize a JSONPath-ish string to the shape `collectKeys` produces:
+ * Normalize a JSONPath-ish string to the shape the walkers here build:
  * no leading `$`, no leading `.`.
  *
  * The UI placeholder and the `DiffOptions` docs both show `$.path.to.thing`,
@@ -568,75 +402,6 @@ function statisticsFromRows(diff: DiffResult): EnhancedDiffResult['statistics'] 
   };
 }
 
-// Compute statistics for the diff
-function computeDiffStatistics(left: any, right: any, options: DiffOptions): EnhancedDiffResult['statistics'] {
-  const leftKeys = new Set<string>();
-  const rightKeys = new Set<string>();
-  
-  // Collect all keys recursively
-  function collectKeys(obj: any, prefix: string = '', targetSet: Set<string>) {
-    if (obj === null || obj === undefined) return;
-    
-    if (typeof obj === 'object') {
-      if (Array.isArray(obj)) {
-        obj.forEach((item, index) => {
-          collectKeys(item, `${prefix}[${index}]`, targetSet);
-        });
-      } else {
-        Object.keys(obj).forEach(key => {
-          if (!options.ignoreKeys?.includes(key)) {
-            const path = prefix ? `${prefix}.${key}` : key;
-            if (!shouldIgnorePath(path, options.ignorePaths)) {
-              targetSet.add(path);
-              collectKeys(obj[key], path, targetSet);
-            }
-          }
-        });
-      }
-    } else {
-      targetSet.add(prefix);
-    }
-  }
-  
-  collectKeys(left, '', leftKeys);
-  collectKeys(right, '', rightKeys);
-  
-  const allKeys = new Set([...leftKeys, ...rightKeys]);
-  const addedKeys = [...rightKeys].filter(key => !leftKeys.has(key));
-  const removedKeys = [...leftKeys].filter(key => !rightKeys.has(key));
-  const commonKeys = [...leftKeys].filter(key => rightKeys.has(key));
-  
-  let changedKeys = 0;
-  commonKeys.forEach(key => {
-    const leftValue = getValueByPath(left, key);
-    const rightValue = getValueByPath(right, key);
-    if (!deepEqual(leftValue, rightValue, options, key)) {
-      changedKeys++;
-    }
-  });
-  
-  return {
-    totalKeys: allKeys.size,
-    changedKeys,
-    addedKeys: addedKeys.length,
-    removedKeys: removedKeys.length,
-    percentageChanged: allKeys.size > 0 ? ((changedKeys + addedKeys.length + removedKeys.length) / allKeys.size) * 100 : 0
-  };
-}
-
-// Get value by path (e.g., "a.b[0].c")
-function getValueByPath(obj: any, path: string): any {
-  const segments = path.split(/\.|\[|\]/).filter(Boolean);
-  let current = obj;
-  
-  for (const segment of segments) {
-    if (current === null || current === undefined) return undefined;
-    current = current[segment];
-  }
-  
-  return current;
-}
-
 // Recursively filter out ignored keys and paths from a JSON object
 function filterIgnoredContent(obj: any, options: DiffOptions, path: string): any {
   if (obj === null || obj === undefined || typeof obj !== 'object') {
@@ -659,12 +424,9 @@ function filterIgnoredContent(obj: any, options: DiffOptions, path: string): any
 
 // Enhanced diff computation
 //
-// `rules` is optional. When provided, it's threaded through to the
-// preprocessing layer (`preprocessJsonForComparison` in diffAlgorithm.ts)
-// which injects inline `/* NOISE:<type>:rule *\/` markers on lines whose
-// JSON path matches a saved rule. Existing callers that omit the parameter
-// see no behavior change. Lane B owns deeper changes to this file (cache
-// eviction, statistics, structural matching) — this is a pure pass-through.
+// `rules` is optional. When provided it reaches `computeJsonTreeDiff`, which
+// applies each rule to the parsed tree before comparison and marks the rows
+// out-of-band via `DiffLine.noise` — never inside `content`.
 export function computeEnhancedDiff(
   leftText: string,
   rightText: string,
@@ -800,9 +562,16 @@ export function searchInDiff(
 ): { line: number; column: number; side: 'left' | 'right' }[] {
   const results: { line: number; column: number; side: 'left' | 'right' }[] = [];
   
-  const searchPattern = options.regex
-    ? new RegExp(query, options.caseSensitive ? 'g' : 'gi')
-    : query;
+  let searchPattern: RegExp | string = query;
+  if (options.regex) {
+    try {
+      searchPattern = new RegExp(query, options.caseSensitive ? 'g' : 'gi');
+    } catch (err) {
+      // V8's message already reads "Invalid regular expression: /(/gi: ..."
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(/invalid regular expression/i.test(detail) ? detail : `Invalid regular expression: ${detail}`);
+    }
+  }
   
   // Search in left side
   diff.left.forEach((line, index) => {
@@ -865,34 +634,48 @@ export function searchInDiff(
   return results;
 }
 
-// Navigate to specific JSON path
+/** `b.id`, `.b.id` and `$.b.id` all name the row the tree diff labels `$.b.id`. */
+function normalizeJsonPath(raw: string): string {
+  const p = raw.trim();
+  if (!p) return '';
+  if (p.startsWith('$')) return p;
+  if (p.startsWith('.') || p.startsWith('[')) return `$${p}`;
+  return `$.${p}`;
+}
+
+/**
+ * Find the row for a JSON path.
+ *
+ * Rows produced by the tree diff carry their exact path, so `$.b.id` lands
+ * on `b.id` and not on the first `id` in the document. The previous version
+ * built a RegExp from the last segment of the user's input, which both
+ * matched the wrong `id` and threw on any key containing `[` or `(`.
+ * Rows without path metadata (text diffs) fall back to a literal search for
+ * the last segment as a key.
+ */
 export function navigateToPath(
   diff: EnhancedDiffResult,
   jsonPath: string
 ): { line: number; side: 'left' | 'right' } | null {
-  // Convert JSONPath to line number in the diff
-  const pathPattern = jsonPath
-    .replace(/\$/g, '')
-    .replace(/\[(\d+)\]/g, '\\[$1\\]')
-    .replace(/\./g, '\\.');
-  
-  // Search for the path in the diff
-  const leftMatch = diff.left.findIndex(line =>
-    line.content && new RegExp(`"${pathPattern.split('.').pop()}"`).test(line.content)
-  );
-  
-  if (leftMatch !== -1) {
-    return { line: leftMatch, side: 'left' };
-  }
-  
-  const rightMatch = diff.right.findIndex(line =>
-    line.content && new RegExp(`"${pathPattern.split('.').pop()}"`).test(line.content)
-  );
-  
-  if (rightMatch !== -1) {
-    return { line: rightMatch, side: 'right' };
+  const wanted = normalizeJsonPath(jsonPath);
+  if (!wanted) return null;
+
+  for (const side of ['left', 'right'] as const) {
+    const line = diff[side].findIndex((l) => l.path === wanted);
+    if (line !== -1) return { line, side };
   }
 
+  const last = wanted.replace(/(\[\d+\])+$/, '').split('.').pop() ?? '';
+  if (!last || last === '$') return null;
+  const asJsonKey = `"${last}"`;
+  const asBareKey = `${last}:`;
+  for (const side of ['left', 'right'] as const) {
+    const line = diff[side].findIndex((l) => {
+      const c = l.content ?? '';
+      return c.includes(asJsonKey) || c.trimStart().startsWith(asBareKey);
+    });
+    if (line !== -1) return { line, side };
+  }
   return null;
 }
 
