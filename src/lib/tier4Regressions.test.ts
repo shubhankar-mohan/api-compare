@@ -210,3 +210,42 @@ describe('D: edits inside a delete/insert run pair by similarity, preserving ord
     expect(Date.now() - t0).toBeLessThan(3000);
   });
 });
+
+// ── E · numeric epoch timestamps get a noise suggestion ────────────────────
+
+describe('E: numeric epoch values under a time-like key are suggested as noise', () => {
+  const suggestion = (left: unknown, right: unknown) => {
+    const d = computeJsonTreeDiff(left, right);
+    const row = d.right.find((l) => l.type === 'modified');
+    return row?.noise ?? null;
+  };
+
+  it('createdAt as epoch millis (number) is suggested', () => {
+    expect(suggestion({ createdAt: 1717000000000 }, { createdAt: 1717000001000 })).toEqual({
+      type: 'epoch-millis',
+      source: 'auto',
+    });
+  });
+
+  it('expires_at as epoch seconds (number) is suggested', () => {
+    expect(suggestion({ expires_at: 1717000000 }, { expires_at: 1717000060 })).toEqual({
+      type: 'epoch-millis',
+      source: 'auto',
+    });
+  });
+
+  it('a 13-digit number under a non-temporal key is not suggested', () => {
+    expect(suggestion({ orderId: 1234567890123 }, { orderId: 1234567890124 })).toBeNull();
+  });
+
+  it('a small number under a time-like key is not suggested', () => {
+    expect(suggestion({ retryAfterSeconds: 30 }, { retryAfterSeconds: 60 })).toBeNull();
+  });
+
+  it('the string form still gets the same suggestion', () => {
+    expect(suggestion({ createdAt: '1717000000000' }, { createdAt: '1717000001000' })).toEqual({
+      type: 'epoch-millis',
+      source: 'auto',
+    });
+  });
+});

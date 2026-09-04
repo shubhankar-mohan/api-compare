@@ -26,7 +26,7 @@ import type { DiffLine, DiffResult, DiffSegment, NoiseAnnotation } from './diffT
 import { computeScalarRowSegments } from './inlineSegments';
 import { alignSequences, type AlignOp } from './sequenceAlign';
 import { ruleMatchesPath, type NoiseRule } from './noiseRules';
-import { CLASSIFIERS, detectFieldType, type NoiseClassifier } from './smartComparison';
+import { CLASSIFIERS, detectFieldType, getClassifier, type NoiseClassifier } from './smartComparison';
 
 export interface JsonTreeDiffOptions {
   /** Saved noise rules. A matching path is rendered greyed and not counted. */
@@ -670,12 +670,28 @@ function legacyNoiseType(key: string | null, value: unknown): NoiseClassifier | 
  * hex-looking string under an unrelated key does not raise a suggestion.
  */
 function autoSuggestion(key: string | null, value: unknown): NoiseClassifier | null {
-  if (key === null || typeof value !== 'string') return null;
+  if (key === null) return null;
+
+  // Epoch timestamps are usually numbers, and the classifiers only read
+  // strings, so `"createdAt": 1717000000000` never got a chip while the same
+  // value quoted did. A number is only suggested under a time-like key: a
+  // 13-digit `orderId` is an id, whatever it looks like.
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value) || !keyLooksTemporal(key)) return null;
+    return getClassifier('epoch-millis')?.match(String(value)) ? 'epoch-millis' : null;
+  }
+
+  if (typeof value !== 'string') return null;
   if (detectFieldType(key, value) === 'normal') return null;
   for (const c of CLASSIFIERS) {
     if (c.match(value)) return c.name;
   }
   return null;
+}
+
+/** `createdAt`, `expires_at`, `timestamp`, `lastLoginOn`, `epochMs`, ... */
+function keyLooksTemporal(key: string): boolean {
+  return /time|date|epoch|expir/i.test(key) || /_(at|on)$/i.test(key) || /[a-z](At|On)$/.test(key);
 }
 
 // ── walk ───────────────────────────────────────────────────────────────────
