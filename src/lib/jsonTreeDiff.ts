@@ -23,7 +23,7 @@
  */
 
 import type { DiffLine, DiffResult, DiffSegment, NoiseAnnotation } from './diffTypes';
-import { computeInlineSegments } from './inlineSegments';
+import { computeScalarRowSegments } from './inlineSegments';
 import { alignSequences, type AlignOp } from './sequenceAlign';
 import { ruleMatchesPath, type NoiseRule } from './noiseRules';
 import { CLASSIFIERS, detectFieldType, type NoiseClassifier } from './smartComparison';
@@ -650,7 +650,16 @@ function walkScalars(l: unknown, r: unknown, ctx: WalkCtx, s: WalkState): void {
     }
   }
 
-  const segments = s.inlineSegments ? computeInlineSegments(leftText, rightText) : undefined;
+  // Diff the value span only; the key prefix and comma are scaffolding.
+  const segments = s.inlineSegments
+    ? computeScalarRowSegments({
+        prefix: `${p}${h}`,
+        leftValue: JSON.stringify(l),
+        rightValue: JSON.stringify(r),
+        leftTail: ctx.leftComma ? ',' : '',
+        rightTail: ctx.rightComma ? ',' : '',
+      })
+    : undefined;
 
   // Suggestion chip lives on the right row; DiffViewer only renders it there.
   const suggestion = autoSuggestion(ctx.key, r) ?? autoSuggestion(ctx.key, l);

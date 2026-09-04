@@ -58,3 +58,47 @@ describe('A: Diff Options reach array element identity', () => {
     expect(d.right.map((l) => l.content).join('\n')).toContain('"foo"');
   });
 });
+
+// ── B · inline highlight covers the value, not the shared key prefix ───────
+
+describe('B: inline segments are computed on the value span', () => {
+  const modifiedRow = (left: unknown, right: unknown) => {
+    const d = computeJsonTreeDiff(left, right);
+    const i = d.left.findIndex((l) => l.type === 'modified');
+    expect(i, 'no modified row').toBeGreaterThanOrEqual(0);
+    return { l: d.left[i], r: d.right[i] };
+  };
+  const texts = (segs: { text: string; type: string }[] | undefined, type: string) =>
+    (segs ?? []).filter((s) => s.type === type).map((s) => s.text);
+
+  it('unrelated string values are replaced whole, not scattered by character', () => {
+    const { l, r } = modifiedRow({ name: 'Leanne Graham' }, { name: 'Ervin Howell' });
+    expect(texts(l.segments, 'removed')).toEqual(['"Leanne Graham"']);
+    expect(texts(r.segments, 'added')).toEqual(['"Ervin Howell"']);
+  });
+
+  it('a one-character change in a similar value highlights just that character', () => {
+    const { l, r } = modifiedRow({ at: '2024-01-01T10:00:00Z' }, { at: '2024-01-02T10:00:00Z' });
+    expect(texts(l.segments, 'removed')).toEqual(['1']);
+    expect(texts(r.segments, 'added')).toEqual(['2']);
+  });
+
+  it('numbers are replaced whole', () => {
+    const { l, r } = modifiedRow({ total: 100 }, { total: 250 });
+    expect(texts(l.segments, 'removed')).toEqual(['100']);
+    expect(texts(r.segments, 'added')).toEqual(['250']);
+  });
+
+  it('the key prefix and the trailing comma are never highlighted', () => {
+    const { l, r } = modifiedRow({ a: 'x', b: 1 }, { a: 'y', b: 1 });
+    expect(texts(l.segments, 'removed')).toEqual(['"x"']);
+    expect(texts(r.segments, 'added')).toEqual(['"y"']);
+    expect(l.content.endsWith(',')).toBe(true);
+  });
+
+  it('segments concatenate back to the rendered row (I1 for segments)', () => {
+    const { l, r } = modifiedRow({ a: 'x', b: 1 }, { a: 'y', b: 1 });
+    expect((l.segments ?? []).map((s) => s.text).join('')).toBe(l.content);
+    expect((r.segments ?? []).map((s) => s.text).join('')).toBe(r.content);
+  });
+});

@@ -14,6 +14,19 @@ const CHAR_DIFF_MAX = 500;
 const WORD_DIFF_MAX = 1000;
 const LEVENSHTEIN_MAX = 300;
 
+/**
+ * Minimum similarity between two scalar *values* for a character-level diff
+ * to be worth showing. Below it the value is replaced whole.
+ *
+ * The threshold is deliberately higher than the one on the text path. Scalar
+ * rows share a `"key": ` prefix and often a trailing comma, and when the whole
+ * line was measured that shared scaffolding lifted two unrelated values over
+ * the line threshold, so `"Leanne Graham"` vs `"Ervin Howell"` rendered as
+ * `Lean`, `e`, `Graham` scattered against `Ervi`, `Howell` — confetti that
+ * reads as noise rather than as a changed name.
+ */
+const SCALAR_CHAR_THRESHOLD = 0.5;
+
 /** Longest common subsequence table. Callers must respect the size caps above. */
 function lcsTable<T>(a: T[], b: T[]): number[][] {
   const m = a.length;
@@ -204,4 +217,45 @@ export function computeInlineSegments(leftLine: string, rightLine: string) {
   const a = tokenize(leftLine);
   const b = tokenize(rightLine);
   return backtrack(a, b, lcsTable(a, b), (t) => t);
+}
+
+/**
+ * Segments for one rendered scalar row, diffed on the value span only.
+ *
+ * `prefix` (indent plus `"key": `) and each side's `tail` (a comma or nothing)
+ * are structural and are always emitted as unchanged, so the highlight can
+ * only ever land on the value. The concatenation of the returned segments is
+ * exactly `prefix + value + tail` for each side.
+ */
+export function computeScalarRowSegments(args: {
+  prefix: string;
+  leftValue: string;
+  rightValue: string;
+  leftTail: string;
+  rightTail: string;
+}): { leftSegments: DiffSegment[]; rightSegments: DiffSegment[] } {
+  const { prefix, leftValue, rightValue, leftTail, rightTail } = args;
+
+  // Measure similarity on the string contents: the surrounding quotes always
+  // match, which alone lifts `"x"` vs `"y"` to 0.67.
+  const unquote = (v: string) =>
+    v.length >= 2 && v.startsWith('"') && v.endsWith('"') ? v.slice(1, -1) : v;
+  const inner =
+    leftValue.length < CHAR_DIFF_MAX &&
+    rightValue.length < CHAR_DIFF_MAX &&
+    calculateSimilarity(unquote(leftValue), unquote(rightValue)) >= SCALAR_CHAR_THRESHOLD
+      ? computeCharDiff(leftValue, rightValue)
+      : wholeLineReplace(leftValue, rightValue);
+
+  const wrap = (segs: DiffSegment[], tail: string) =>
+    mergeRuns([
+      ...(prefix ? [{ text: prefix, type: 'unchanged' as const }] : []),
+      ...segs,
+      ...(tail ? [{ text: tail, type: 'unchanged' as const }] : []),
+    ]);
+
+  return {
+    leftSegments: wrap(inner.leftSegments, leftTail),
+    rightSegments: wrap(inner.rightSegments, rightTail),
+  };
 }
