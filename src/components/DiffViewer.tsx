@@ -38,9 +38,18 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
+/** What the summary card needs from the diff the viewer actually rendered. */
+export interface DiffSummary {
+  hasDifferences: boolean;
+  /** Statistics were skipped because the input exceeded STATS_MAX_LINES. */
+  statsSkipped: boolean;
+}
+
 interface DiffViewerProps {
   original: ApiResponse;
   localhost: ApiResponse;
+  /** Called with the verdict of the diff on screen, whenever it changes. */
+  onSummary?: (summary: DiffSummary) => void;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -341,7 +350,7 @@ function DiffPanel({
   );
 }
 
-export function DiffViewer({ original, localhost }: DiffViewerProps) {
+export function DiffViewer({ original, localhost, onSummary }: DiffViewerProps) {
   const [viewMode, setViewMode] = useState<'diff' | 'foldable' | 'merge'>('diff');
   const [diffOptions, setDiffOptions] = useState<DiffOptions>({});
   const [searchResults, setSearchResults] = useState<ReturnType<typeof searchInDiff>>([]);
@@ -423,6 +432,16 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
     // rulesVersion forces a recompute even when endpointRules reference hasn't changed
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [original.body, localhost.body, diffOptions, endpointRules, rulesVersion]);
+
+  // The summary card renders from this same result. The page used to run a
+  // second computeDiff without rules or options just for the counts, so a
+  // rule-suppressed field was greyed out here and counted there.
+  useEffect(() => {
+    onSummary?.({
+      hasDifferences: bodyDiff.hasDifferences,
+      statsSkipped: (bodyDiff as EnhancedDiffResult).statistics?.skipped === true,
+    });
+  }, [bodyDiff, onSummary]);
 
   // ──────────────────────────────────────────────────────────────────────
   // Noise actions: teach (add rule) and toggle "show anyway"

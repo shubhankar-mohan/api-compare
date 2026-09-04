@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { CurlInput } from '@/components/CurlInput';
 import { SummaryCard } from '@/components/SummaryCard';
-import { DiffViewer } from '@/components/DiffViewer';
+import { DiffViewer, type DiffSummary } from '@/components/DiffViewer';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { TroubleshootSection } from '@/components/TroubleshootSection';
 import { CorsErrorCard } from '@/components/CorsErrorCard';
@@ -12,7 +12,6 @@ import { TextDiffChecker } from '@/components/TextDiffChecker';
 import { FeaturesSection, UsageGuideSection, FAQSection, BestPracticesSection, UseCasesSection } from '@/components/ContentSections';
 import { parseCurl } from '@/lib/curlParser';
 import { executeComparison, ComparisonResult } from '@/lib/requestExecutor';
-import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
 import { loadProxyConfig, saveProxyConfig, type ProxyConfig } from '@/lib/proxyClient';
 import { ProxySetupGuide } from '@/components/ProxySetupGuide';
 import { toast } from '@/hooks/use-toast';
@@ -35,6 +34,7 @@ const Index = () => {
   const [showMoreSections, setShowMoreSections] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ComparisonResult | null>(null);
+  const [diffSummary, setDiffSummary] = useState<DiffSummary | null>(null);
   const [proxyConfig, setProxyConfig] = useState<ProxyConfig>(() => loadProxyConfig());
   const [proxyDialogOpen, setProxyDialogOpen] = useState(false);
   // Kept so the error cards can re-run the exact same comparison — previously
@@ -49,6 +49,7 @@ const Index = () => {
   ) => {
     setIsLoading(true);
     setResult(null);
+    setDiffSummary(null);
     // Re-read rather than trusting state: the proxy may have just been enabled
     // from inside a dialog rendered by the error card.
     const proxy = loadProxyConfig();
@@ -96,6 +97,7 @@ const Index = () => {
         dropHeaders: opts.dropHeaders,
       });
       setResult(comparisonResult);
+      setDiffSummary(null);
       const hasDiff = comparisonResult.original.body !== comparisonResult.localhost.body || comparisonResult.original.status !== comparisonResult.localhost.status;
       toast({ title: 'Comparison complete', description: hasDiff ? 'Differences found between responses' : 'Responses are identical' });
     } catch (error) {
@@ -134,34 +136,6 @@ const Index = () => {
       setProxyDialogOpen(true);
     }
   };
-
-  const leftFormatted = result ? formatJson(result.original.body) : '';
-  const rightFormatted = result ? formatJson(result.localhost.body) : '';
-  // Computed during this component's own render, so a throw here would blank
-  // the page above the diff's error boundary. It only feeds the summary counts,
-  // so degrade to null and let DiffViewer surface the real error.
-  let bodyDiff: ReturnType<typeof computeDiff> | null = null;
-  if (result) {
-    try {
-      bodyDiff = computeDiff(leftFormatted, rightFormatted);
-    } catch {
-      bodyDiff = null;
-    }
-  }
-
-  // Mirror Lane B's stats-skipped gate (src/lib/enhancedDiffAlgorithm.ts STATS_MAX_LINES = 3000)
-  // so SummaryCard can show "Stats unavailable for large diffs" without lifting state from DiffViewer,
-  // which computes the enhanced diff separately.
-  let statsSkipped = false;
-  if (result) {
-    try {
-      JSON.parse(leftFormatted);
-      JSON.parse(rightFormatted);
-      statsSkipped = leftFormatted.split('\n').length > 3000 || rightFormatted.split('\n').length > 3000;
-    } catch {
-      statsSkipped = false;
-    }
-  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col relative overflow-hidden">
@@ -235,9 +209,9 @@ const Index = () => {
 
                 {result && (result.original.success && result.localhost.success ? (
                   <>
-                    <SummaryCard original={result.original} localhost={result.localhost} hasDifferences={bodyDiff?.hasDifferences ?? false} statsSkipped={statsSkipped} />
+                    <SummaryCard original={result.original} localhost={result.localhost} hasDifferences={diffSummary?.hasDifferences ?? null} statsSkipped={diffSummary?.statsSkipped} />
                     <ErrorBoundary label="Comparing these responses">
-                      <DiffViewer original={result.original} localhost={result.localhost} />
+                      <DiffViewer original={result.original} localhost={result.localhost} onSummary={setDiffSummary} />
                     </ErrorBoundary>
                   </>
                 ) : (
