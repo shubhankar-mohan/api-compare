@@ -1,5 +1,5 @@
 {
-  "name": "@diffchecker/proxy",
+  "name": "@shubhankar-mohan/diffchecker-proxy",
   "version": "1.0.0",
   "description": "Local CORS-free relay for DiffChecker. Forwards one API request from your machine so the browser can read the response. No data leaves your machine.",
   "type": "module",
@@ -9,7 +9,8 @@
   "main": "./diffchecker-proxy.mjs",
   "files": [
     "diffchecker-proxy.mjs",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18"
@@ -28,5 +29,6 @@
     "url": "git+https://github.com/shubhankar-mohan/api-compare.git",
     "directory": "proxy"
   },
-  "homepage": "https://github.com/shubhankar-mohan/api-compare/tree/main/proxy"
+  "homepage": "https://github.com/shubhankar-mohan/api-compare/tree/main/proxy",
+  "author": "Shubhankar Mohan"
 }

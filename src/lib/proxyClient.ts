@@ -1,5 +1,5 @@
 /**
- * Client for the DiffChecker local proxy (`npx @diffchecker/proxy`).
+ * Client for the DiffChecker local proxy (`npx @shubhankar-mohan/diffchecker-proxy`).
  *
  * A browser cannot read a cross-origin response that the target server did not
  * authorize, and production APIs will not allow-list a diffing tool. The proxy
@@ -14,7 +14,7 @@
  */
 
 export const DEFAULT_PROXY_URL = 'http://127.0.0.1:8787';
-export const PROXY_INSTALL_COMMAND = 'npx @diffchecker/proxy';
+export const PROXY_INSTALL_COMMAND = 'npx @shubhankar-mohan/diffchecker-proxy';
 
 /**
  * Fallback that needs no npm registry at all.

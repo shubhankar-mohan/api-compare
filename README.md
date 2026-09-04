@@ -36,7 +36,7 @@ page fails, and no amount of client-side code can override it.
 Run the local proxy instead:
 
 ```bash
-npx @diffchecker/proxy
+npx @shubhankar-mohan/diffchecker-proxy
 ```
 
 Then turn on **Use local proxy** in the app. Requests are forwarded from your own
@@ -60,6 +60,12 @@ See [`proxy/README.md`](proxy/README.md) for options and security notes.
 - **Text Comparison**: Compare configuration files, code snippets, or any text content
 - **Testing**: Verify API consistency across different environments
 - **Migration Validation**: Ensure API compatibility when migrating services
+
+## License
+
+MIT — see [LICENSE](LICENSE). The local proxy in [`proxy/`](proxy/) is published
+separately as [`@shubhankar-mohan/diffchecker-proxy`](https://www.npmjs.com/package/@shubhankar-mohan/diffchecker-proxy)
+under the same licence.
 
 ## Project Info
 

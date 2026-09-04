@@ -45,7 +45,7 @@ src/
 │   ├── noiseRules.ts            # Per-endpoint noise rules + JSONPath matching
 │   └── smartComparison.ts       # Field type detection (timestamps, IDs, etc.)
 proxy/
-└── diffchecker-proxy.mjs        # Zero-dep local CORS relay (npx @diffchecker/proxy)
+└── diffchecker-proxy.mjs        # Zero-dep local CORS relay (npx @shubhankar-mohan/diffchecker-proxy)
 ├── hooks/
 │   └── useCurlHistory.ts        # localStorage-based cURL command history
 └── test/

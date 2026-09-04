@@ -1,10 +1,10 @@
-# @diffchecker/proxy
+# @shubhankar-mohan/diffchecker-proxy
 
 A ~250-line, zero-dependency relay that lets [DiffChecker](https://diffchecker.dev) compare
 API responses the browser refuses to read.
 
 ```bash
-npx @diffchecker/proxy
+npx @shubhankar-mohan/diffchecker-proxy
 ```
 
 Leave it running, then turn on **Use local proxy** in DiffChecker.
@@ -68,7 +68,7 @@ By default only `https://diffchecker.dev` and any `localhost` / `127.0.0.1` orig
 use the proxy. If you self-host DiffChecker somewhere else:
 
 ```bash
-npx @diffchecker/proxy --allow-origin https://diffchecker.internal.corp
+npx @shubhankar-mohan/diffchecker-proxy --allow-origin https://diffchecker.internal.corp
 ```
 
 ## Security notes
@@ -116,7 +116,7 @@ another use for it.
 
 ## Publishing
 
-`npx @diffchecker/proxy` only resolves once this package is on the registry:
+`npx @shubhankar-mohan/diffchecker-proxy` only resolves once this package is on the registry:
 
 ```bash
 cd proxy
