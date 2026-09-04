@@ -145,3 +145,68 @@ describe('C: calculateSimilarity is not fooled by its own cache', () => {
     expect(calculateSimilarity(a, 'b'.repeat(2000))).toBeLessThan(0.05);
   });
 });
+
+// ── D · pairing inside a delete/insert run is by similarity, in order ──────
+
+describe('D: edits inside a delete/insert run pair by similarity, preserving order', () => {
+  const readBack = (rows: { type: string; content: string }[]) =>
+    JSON.parse(rows.filter((l) => l.type !== 'empty').map((l) => l.content).join('\n'));
+  const count = (rows: { type: string }[], type: string) => rows.filter((l) => l.type === type).length;
+
+  it('a removed record before an edited one no longer hides the edit', () => {
+    // Positional pairing matched A with B' and B with C, both below the
+    // threshold, so all four records rendered whole with no inline highlight.
+    const left = [
+      { n: 'a', p: 1, q: 1, r: 1 },
+      { n: 'b', p: 2, q: 2, r: 2 },
+    ];
+    const right = [
+      { n: 'b', p: 2, q: 2, r: 3 },
+      { n: 'c', p: 9, q: 9, r: 9 },
+    ];
+    const d = computeJsonTreeDiff(left, right);
+    expect(count(d.left, 'modified'), 'the b→b edit should be one modified row').toBe(1);
+    expect(count(d.left, 'removed'), 'record a removed whole').toBe(6);
+    expect(count(d.right, 'added'), 'record c added whole').toBe(6);
+    expect(readBack(d.left)).toEqual(left);
+    expect(readBack(d.right)).toEqual(right);
+  });
+
+  it('a swap with edits keeps each pane in its own order (I1) and still finds one edit', () => {
+    const left = [
+      { n: 'a', p: 1, q: 1, r: 1 },
+      { n: 'b', p: 2, q: 2, r: 2 },
+    ];
+    const right = [
+      { n: 'b', p: 2, q: 2, r: 3 },
+      { n: 'a', p: 1, q: 1, r: 9 },
+    ];
+    const d = computeJsonTreeDiff(left, right);
+    expect(count(d.left, 'modified')).toBe(1);
+    expect(readBack(d.left)).toEqual(left);
+    expect(readBack(d.right)).toEqual(right);
+  });
+
+  it('positionally aligned edits still pair one to one', () => {
+    const left = [
+      { n: 'a', p: 1, q: 1, r: 1 },
+      { n: 'b', p: 2, q: 2, r: 2 },
+    ];
+    const right = [
+      { n: 'a', p: 1, q: 1, r: 8 },
+      { n: 'b', p: 2, q: 2, r: 9 },
+    ];
+    const d = computeJsonTreeDiff(left, right);
+    expect(count(d.left, 'modified')).toBe(2);
+    expect(d.additions).toBe(2);
+    expect(d.removals).toBe(2);
+  });
+
+  it('a very long run of unrelated records stays fast', () => {
+    const left = Array.from({ length: 3000 }, (_, i) => ({ n: `l${i}`, v: i }));
+    const right = Array.from({ length: 3000 }, (_, i) => ({ n: `r${i}`, v: -i }));
+    const t0 = Date.now();
+    computeJsonTreeDiff(left, right);
+    expect(Date.now() - t0).toBeLessThan(3000);
+  });
+});

@@ -441,8 +441,23 @@ function elementSimilarity(a: unknown, b: unknown, n: ScalarNormalization): numb
 type PairedOp = AlignOp | { op: 'pair'; i: number; j: number };
 
 /**
+ * Largest delete/insert run that is paired by similarity. Beyond it the run
+ * is paired positionally, as the similarity matrix alone is O(dels x adds)
+ * element comparisons.
+ */
+const MAX_PAIRING_RUN = 128;
+
+/**
  * Fold a run of deletions immediately followed by a run of insertions into
  * in-place edits where the elements are recognisably the same record.
+ *
+ * Pairing is a maximum-weight *monotone* matching over element similarity,
+ * not a positional zip: with `[A, B]` vs `[B', C]` the zip paired A with B'
+ * and B with C, both below the threshold, so the one-field edit to B rendered
+ * as four whole records. Monotone matters: a pairing that crossed would emit
+ * the right pane out of its own order, and each pane must read back as the
+ * document it represents (I1). A swap therefore still shows one side of it
+ * as a removal plus an insertion — that is what a swap looks like in order.
  */
 function pairAdjacentEdits(
   ops: AlignOp[],
@@ -465,21 +480,111 @@ function pairAdjacentEdits(
     while (k < ops.length && ops[k].op === 'del') dels.push((ops[k++] as { i: number }).i);
     while (k < ops.length && ops[k].op === 'add') adds.push((ops[k++] as { j: number }).j);
 
-    const candidates = Math.min(dels.length, adds.length);
-    let p = 0;
-    for (; p < candidates; p++) {
-      if (elementSimilarity(l[dels[p]], r[adds[p]], n) >= ARRAY_PAIR_THRESHOLD) {
-        out.push({ op: 'pair', i: dels[p], j: adds[p] });
-      } else {
-        out.push({ op: 'del', i: dels[p] });
-        out.push({ op: 'add', j: adds[p] });
-      }
+    if (dels.length > MAX_PAIRING_RUN || adds.length > MAX_PAIRING_RUN) {
+      pairPositionally(dels, adds, l, r, n, out);
+    } else {
+      pairBySimilarity(dels, adds, l, r, n, out);
     }
-    for (let q = p; q < dels.length; q++) out.push({ op: 'del', i: dels[q] });
-    for (let q = p; q < adds.length; q++) out.push({ op: 'add', j: adds[q] });
   }
 
   return out;
+}
+
+function pairPositionally(
+  dels: number[],
+  adds: number[],
+  l: unknown[],
+  r: unknown[],
+  n: ScalarNormalization,
+  out: PairedOp[]
+): void {
+  const candidates = Math.min(dels.length, adds.length);
+  let p = 0;
+  for (; p < candidates; p++) {
+    if (elementSimilarity(l[dels[p]], r[adds[p]], n) >= ARRAY_PAIR_THRESHOLD) {
+      out.push({ op: 'pair', i: dels[p], j: adds[p] });
+    } else {
+      out.push({ op: 'del', i: dels[p] });
+      out.push({ op: 'add', j: adds[p] });
+    }
+  }
+  for (let q = p; q < dels.length; q++) out.push({ op: 'del', i: dels[q] });
+  for (let q = p; q < adds.length; q++) out.push({ op: 'add', j: adds[q] });
+}
+
+/** Weighted LCS over the run: maximise total similarity of paired elements. */
+function pairBySimilarity(
+  dels: number[],
+  adds: number[],
+  l: unknown[],
+  r: unknown[],
+  n: ScalarNormalization,
+  out: PairedOp[]
+): void {
+  const m = dels.length;
+  const w = adds.length;
+  if (m === 0 || w === 0) {
+    for (const i of dels) out.push({ op: 'del', i });
+    for (const j of adds) out.push({ op: 'add', j });
+    return;
+  }
+
+  // Similarity below the threshold is zero weight: never a candidate pair.
+  const sim = new Float64Array(m * w);
+  for (let a = 0; a < m; a++) {
+    for (let b = 0; b < w; b++) {
+      const v = elementSimilarity(l[dels[a]], r[adds[b]], n);
+      sim[a * w + b] = v >= ARRAY_PAIR_THRESHOLD ? v : 0;
+    }
+  }
+
+  const width = w + 1;
+  const dp = new Float64Array((m + 1) * width);
+  // 0 = came from above (delete), 1 = from the left (insert), 2 = diagonal (pair)
+  const from = new Uint8Array((m + 1) * width);
+  for (let a = 1; a <= m; a++) {
+    for (let b = 1; b <= w; b++) {
+      const up = dp[(a - 1) * width + b];
+      const left = dp[a * width + b - 1];
+      const s = sim[(a - 1) * w + (b - 1)];
+      const diag = s > 0 ? dp[(a - 1) * width + b - 1] + s : -1;
+      let best = up;
+      let choice = 0;
+      if (left >= best) {
+        best = left;
+        choice = 1;
+      }
+      if (diag >= best) {
+        best = diag;
+        choice = 2;
+      }
+      dp[a * width + b] = best;
+      from[a * width + b] = choice;
+    }
+  }
+
+  const reversed: PairedOp[] = [];
+  let a = m;
+  let b = w;
+  while (a > 0 || b > 0) {
+    if (a === 0) {
+      reversed.push({ op: 'add', j: adds[--b] });
+    } else if (b === 0) {
+      reversed.push({ op: 'del', i: dels[--a] });
+    } else {
+      const choice = from[a * width + b];
+      if (choice === 2) {
+        reversed.push({ op: 'pair', i: dels[a - 1], j: adds[b - 1] });
+        a--;
+        b--;
+      } else if (choice === 1) {
+        reversed.push({ op: 'add', j: adds[--b] });
+      } else {
+        reversed.push({ op: 'del', i: dels[--a] });
+      }
+    }
+  }
+  for (let q = reversed.length - 1; q >= 0; q--) out.push(reversed[q]);
 }
 
 function isPrimitive(v: unknown): boolean {
