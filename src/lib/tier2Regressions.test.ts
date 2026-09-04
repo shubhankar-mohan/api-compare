@@ -97,8 +97,32 @@ describe('C: crossing a size guard degrades gracefully, and says so', () => {
     });
   }
 
-  it('text: beyond the cap it degrades but flags it', () => {
-    const { left, right } = insertOne(20000);
+  // Above the cell budget, but the change is a single insertion: trimming the
+  // common prefix and suffix leaves nothing for the table to align, so the
+  // result must be exact and must not claim to be approximate.
+  for (const n of [4500, 20000]) {
+    it(`text: one insertion into ${n} lines is exact even above the cell budget`, () => {
+      const { left, right } = insertOne(n);
+      const d = computeDiff(left, right);
+      expect(d.additions, `cascade at n=${n}`).toBe(1);
+      expect(d.removals).toBe(0);
+      expect(d.degraded ?? false).toBe(false);
+    });
+  }
+
+  it('text: a 10-line rewrite in the middle of 5000 lines is exact', () => {
+    const lines = Array.from({ length: 5000 }, (_, i) => `INFO batch=${i} ok`);
+    const right = lines.slice();
+    for (let i = 2500; i < 2510; i++) right[i] = `WARN batch=${i} retried`;
+    const d = computeDiff(lines.join('\n'), right.join('\n'));
+    expect(d.additions).toBe(10);
+    expect(d.removals).toBe(10);
+    expect(d.degraded ?? false).toBe(false);
+  });
+
+  it('text: beyond the cap with nothing in common it degrades but flags it', () => {
+    const left = Array.from({ length: 20000 }, (_, i) => `left ${i}`).join('\n');
+    const right = Array.from({ length: 20000 }, (_, i) => `right ${i}`).join('\n');
     const d = computeDiff(left, right);
     expect(d.degraded, 'silently degraded with no signal').toBe(true);
   });
@@ -108,14 +132,31 @@ describe('C: crossing a size guard degrades gracefully, and says so', () => {
     right: JSON.stringify({ ids: [-1, ...Array.from({ length: n }, (_, i) => i)] }),
   });
 
-  for (const n of [1199, 1200, 1201, 2500]) {
+  for (const n of [1199, 1200, 1201, 2500, 4500, 20000]) {
     it(`array: prepending to ${n} elements costs one element`, () => {
       const { left, right } = prepend(n);
       const d = computeDiff(left, right);
       expect(d.additions, `array cliff at n=${n}`).toBe(1);
       expect(d.removals).toBe(0);
+      expect(d.degraded ?? false).toBe(false);
     });
   }
+
+  it('array: one record edited in the middle of 5000 keyless records is exact', () => {
+    const recs = Array.from({ length: 5000 }, (_, i) => ({ n: `item-${i}`, qty: i }));
+    const edited = recs.map((r, i) => (i === 2500 ? { ...r, qty: -1 } : r));
+    const d = computeDiff(JSON.stringify({ items: recs }), JSON.stringify({ items: edited }));
+    expect(d.additions).toBe(1);
+    expect(d.removals).toBe(1);
+    expect(d.degraded ?? false).toBe(false);
+  });
+
+  it('array: beyond the cap with nothing in common it degrades but flags it', () => {
+    const left = JSON.stringify({ ids: Array.from({ length: 5000 }, (_, i) => `l${i}`) });
+    const right = JSON.stringify({ ids: Array.from({ length: 5000 }, (_, i) => `r${i}`) });
+    const d = computeDiff(left, right);
+    expect(d.degraded, 'array path silently degraded with no signal').toBe(true);
+  });
 
   it('inline segment computation stays fast just under its cap', () => {
     const mk = (v: string) => {

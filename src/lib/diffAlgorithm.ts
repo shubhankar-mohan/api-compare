@@ -2,6 +2,7 @@ import { detectFieldType, CLASSIFIERS } from './smartComparison';
 import { ruleMatchesPath, type NoiseRule } from './noiseRules';
 import { computeJsonTreeDiff } from './jsonTreeDiff';
 import { calculateSimilarity, computeInlineSegments, clearSimilarityCache } from './inlineSegments';
+import { alignSequences, type AlignOp } from './sequenceAlign';
 import type {
   DiffLine,
   DiffLineType,
@@ -17,6 +18,9 @@ export { clearSimilarityCache };
 
 /**
  * Budget for the LCS table, in cells, shared by the text and array paths.
+ *
+ * The budget applies after the common prefix and suffix are trimmed (see
+ * `sequenceAlign.ts`), so a large document with a small change never hits it.
  *
  * This replaces a flat line-count cap. A count-based guard creates an inverted
  * cliff — the *worst* input sits just below the threshold, and one line more
@@ -130,57 +134,6 @@ function normalizeLine(line: string, config?: ComparisonConfig): string {
 
 // ── text diff ──────────────────────────────────────────────────────────────
 
-type LineOp =
-  | { t: 'eq'; i: number; j: number }
-  | { t: 'del'; i: number }
-  | { t: 'add'; j: number };
-
-/**
- * LCS edit script over pre-normalized lines, in forward order.
- *
- * The table is one flat `Int32Array` rather than an array of arrays: 4 bytes a
- * cell instead of a boxed number plus per-row object overhead, which is what
- * makes a 9M-cell table practical. Ops are pushed and reversed rather than
- * unshifted — `unshift` is O(n) per call, so building a large edit script that
- * way is quadratic on its own.
- */
-function lineOps(a: string[], b: string[]): LineOp[] {
-  const m = a.length;
-  const n = b.length;
-  const width = n + 1;
-  const dp = new Int32Array((m + 1) * width);
-
-  for (let i = 1; i <= m; i++) {
-    const row = i * width;
-    const prev = row - width;
-    const ai = a[i - 1];
-    for (let j = 1; j <= n; j++) {
-      dp[row + j] =
-        ai === b[j - 1]
-          ? dp[prev + j - 1] + 1
-          : Math.max(dp[prev + j], dp[row + j - 1]);
-    }
-  }
-
-  const reversed: LineOp[] = [];
-  let i = m;
-  let j = n;
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
-      reversed.push({ t: 'eq', i: i - 1, j: j - 1 });
-      i--;
-      j--;
-    } else if (j > 0 && (i === 0 || dp[i * width + j - 1] >= dp[(i - 1) * width + j])) {
-      reversed.push({ t: 'add', j: j - 1 });
-      j--;
-    } else {
-      reversed.push({ t: 'del', i: i - 1 });
-      i--;
-    }
-  }
-  return reversed.reverse();
-}
-
 /**
  * Turn an edit script into aligned rows.
  *
@@ -191,7 +144,7 @@ function lineOps(a: string[], b: string[]): LineOp[] {
  * makes a lone insertion report as exactly one addition.
  */
 function rowsFromOps(
-  ops: LineOp[],
+  ops: AlignOp[],
   leftLines: string[],
   rightLines: string[],
   leftNorm: string[],
@@ -228,7 +181,7 @@ function rowsFromOps(
   let k = 0;
   while (k < ops.length) {
     const op = ops[k];
-    if (op.t === 'eq') {
+    if (op.op === 'match') {
       emitEq(op.i, op.j);
       k++;
       continue;
@@ -237,8 +190,8 @@ function rowsFromOps(
     // Collect the current run of deletions then insertions.
     const dels: number[] = [];
     const adds: number[] = [];
-    while (k < ops.length && ops[k].t === 'del') dels.push((ops[k++] as { i: number }).i);
-    while (k < ops.length && ops[k].t === 'add') adds.push((ops[k++] as { j: number }).j);
+    while (k < ops.length && ops[k].op === 'del') dels.push((ops[k++] as { i: number }).i);
+    while (k < ops.length && ops[k].op === 'add') adds.push((ops[k++] as { j: number }).j);
 
     if (!advanced) {
       dels.forEach(emitDel);
@@ -260,45 +213,6 @@ function rowsFromOps(
     }
     for (let q = p; q < dels.length; q++) emitDel(dels[q]);
     for (let q = p; q < adds.length; q++) emitAdd(adds[q]);
-  }
-
-  return { left, right, additions, removals, hasDifferences: additions > 0 || removals > 0 };
-}
-
-/** Positional fallback for inputs too large for an O(m*n) table. */
-function computeSimpleDiffWithNormalization(
-  leftLines: string[],
-  rightLines: string[],
-  leftNormalized: string[],
-  rightNormalized: string[]
-): DiffResult {
-  const left: DiffLine[] = [];
-  const right: DiffLine[] = [];
-  let additions = 0;
-  let removals = 0;
-
-  const maxLength = Math.max(leftLines.length, rightLines.length);
-
-  for (let i = 0; i < maxLength; i++) {
-    if (i < leftLines.length && i < rightLines.length) {
-      if (leftNormalized[i] === rightNormalized[i]) {
-        left.push({ content: leftLines[i], type: 'unchanged', lineNumber: i + 1 });
-        right.push({ content: rightLines[i], type: 'unchanged', lineNumber: i + 1 });
-      } else {
-        left.push({ content: leftLines[i], type: 'removed', lineNumber: i + 1 });
-        right.push({ content: rightLines[i], type: 'added', lineNumber: i + 1 });
-        removals++;
-        additions++;
-      }
-    } else if (i < leftLines.length) {
-      left.push({ content: leftLines[i], type: 'removed', lineNumber: i + 1 });
-      right.push({ content: '', type: 'empty', lineNumber: null });
-      removals++;
-    } else {
-      left.push({ content: '', type: 'empty', lineNumber: null });
-      right.push({ content: rightLines[i], type: 'added', lineNumber: i + 1 });
-      additions++;
-    }
   }
 
   return { left, right, additions, removals, hasDifferences: additions > 0 || removals > 0 };
@@ -326,18 +240,14 @@ function computeTextDiff(
     };
   }
 
-  // The O(m*n) table is the only superlinear step. Past the cell budget,
-  // degrade to a positional diff rather than exhausting memory — and mark the
-  // result so the UI can say the alignment is approximate instead of
+  // The O(m*n) table is the only superlinear step. The aligner trims the
+  // common prefix and suffix first, so the budget only applies to what
+  // differs; past it the middle is zipped positionally and the result is
+  // marked so the UI can say the alignment is approximate instead of
   // presenting a wall of red and green as fact.
-  if ((leftLines.length + 1) * (rightLines.length + 1) > MAX_LCS_CELLS) {
-    return {
-      ...computeSimpleDiffWithNormalization(leftLines, rightLines, leftNorm, rightNorm),
-      degraded: true,
-    };
-  }
-
-  return rowsFromOps(lineOps(leftNorm, rightNorm), leftLines, rightLines, leftNorm, rightNorm, advanced);
+  const alignment = alignSequences(leftNorm, rightNorm, MAX_LCS_CELLS);
+  const result = rowsFromOps(alignment.ops, leftLines, rightLines, leftNorm, rightNorm, advanced);
+  return alignment.degraded ? { ...result, degraded: true } : result;
 }
 
 // ── entry point ────────────────────────────────────────────────────────────
