@@ -1,7 +1,14 @@
 /**
- * Best-effort classifier for fetch() failures. fetch() only tells JS "Failed to fetch"
- * with no machine-readable cause, so we infer by running follow-up probes and inspecting
- * page/URL state. The output drives the user-facing error UX.
+ * Best-effort classifier for request failures.
+ *
+ * A browser `fetch` only ever tells JavaScript "Failed to fetch" with no
+ * machine-readable cause, so for direct requests we infer the reason by running
+ * follow-up probes and inspecting page/URL state.
+ *
+ * Requests sent through the local proxy are a different story: the proxy is a
+ * Node process, so it sees the real error (DNS, TLS, connection refused) and
+ * reports it. When `viaProxy` is set we trust that instead of guessing — one of
+ * the quieter benefits of routing through it.
  */
 
 export type ErrorKind =
@@ -11,6 +18,7 @@ export type ErrorKind =
   | 'unreachable'
   | 'bad-url'
   | 'timeout'
+  | 'proxy-unreachable'
   | 'unknown';
 
 export interface ErrorDiagnosis {
@@ -26,12 +34,40 @@ export interface ErrorDiagnosis {
     sentHeaders: string[];
     likelyUnallowedHeaders: string[];
     rawError: string;
+    /** True when this attempt went through the local proxy. */
+    viaProxy: boolean;
+    /**
+     * Whether a local proxy is listening. Null when not checked. Lets the UI
+     * offer "switch it on" rather than "go install something".
+     */
+    proxyRunning: boolean | null;
+    /** Header names the browser refused to send. */
+    strippedHeaders: string[];
+    /** Subset of the above that carried credentials (Cookie). */
+    strippedAuthHeaders: string[];
   };
 }
 
-// Header names that are reliably part of the default CORS allow-list across typical
-// server configs. Anything outside this set is a candidate for "your server didn't
-// whitelist this and that's why the preflight failed."
+export interface DiagnosisContext {
+  viaProxy?: boolean;
+  /** Error kind reported by the proxy itself (dns / tls / refused / timeout). */
+  proxyErrorKind?: string;
+  strippedHeaders?: string[];
+  strippedAuthHeaders?: string[];
+  /**
+   * Whether a local proxy is listening, if the caller already knows.
+   *
+   * Deliberately supplied rather than probed here: this function runs once per
+   * failed request, but the answer is per-comparison, and an extra fetch on
+   * every failure path costs latency the user feels before seeing any error.
+   * `executeComparison` checks once and fills this in.
+   */
+  proxyRunning?: boolean | null;
+}
+
+// Header names reliably covered by typical default CORS configs. Anything
+// outside this set is a candidate for "the server didn't whitelist this, which
+// is why the preflight failed".
 const COMMONLY_ALLOWED_HEADERS = new Set([
   'accept',
   'accept-language',
@@ -65,26 +101,22 @@ function isOnline(): boolean {
 }
 
 /**
- * Probe whether the server is reachable at all. `no-cors` mode bypasses the SOP
- * for the *request* (we can't read the response, but the network layer still runs),
- * so a resolved promise means the server answered something. A rejected promise
- * means DNS / TCP / TLS / cert error — the host isn't reachable.
+ * Probe whether the server is reachable at all. `no-cors` bypasses the SOP for
+ * the *request* (the response is opaque, but the network layer still runs), so
+ * a resolved promise means the host answered something and the original failure
+ * was a CORS rejection. A rejection means DNS / TCP / TLS trouble.
  */
 async function probeReachable(url: string, timeoutMs = 5000): Promise<boolean> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     await fetch(url, {
       method: 'HEAD',
       mode: 'no-cors',
-      signal: controller.signal,
       cache: 'no-store',
+      signal: AbortSignal.timeout(timeoutMs),
     });
     return true;
   } catch {
     return false;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -95,93 +127,85 @@ function suspectUnallowedHeaders(sent: Record<string, string>): string[] {
     .filter((h) => !h.startsWith('sec-'));
 }
 
+/** Map a proxy-reported cause onto our user-facing kinds. */
+function kindFromProxyError(proxyErrorKind?: string): ErrorKind {
+  switch (proxyErrorKind) {
+    case 'timeout':
+      return 'timeout';
+    case 'dns':
+    case 'refused':
+    case 'tls':
+    case 'network':
+      return 'unreachable';
+    case 'proxy-unreachable':
+      return 'proxy-unreachable';
+    case 'bad-request':
+      return 'bad-url';
+    default:
+      return 'unknown';
+  }
+}
+
 export async function diagnoseFetchError(
   url: string,
   method: string,
   sentHeaders: Record<string, string>,
   rawError: Error,
+  context: DiagnosisContext = {}
 ): Promise<ErrorDiagnosis> {
   const origin = pageOrigin();
   const parsed = parseUrl(url);
-  const targetOrigin = parsed ? parsed.origin : null;
-  const sentHeaderNames = Object.keys(sentHeaders);
-  const likelyUnallowedHeaders = suspectUnallowedHeaders(sentHeaders);
   const rawMessage = rawError.message || String(rawError);
 
   const baseDetails = {
     url,
     method,
-    targetOrigin,
+    targetOrigin: parsed ? parsed.origin : null,
     pageOrigin: origin,
-    sentHeaders: sentHeaderNames,
-    likelyUnallowedHeaders,
+    sentHeaders: Object.keys(sentHeaders),
+    likelyUnallowedHeaders: suspectUnallowedHeaders(sentHeaders),
     rawError: rawMessage,
+    viaProxy: context.viaProxy === true,
+    proxyRunning: context.proxyRunning ?? null,
+    strippedHeaders: context.strippedHeaders ?? [],
+    strippedAuthHeaders: context.strippedAuthHeaders ?? [],
+    isMixedContent: false,
+    isOnline: isOnline(),
+    reachable: null as boolean | null,
   };
 
-  if (!parsed) {
+  // Proxied request: the proxy already told us the real cause.
+  if (context.viaProxy) {
     return {
-      kind: 'bad-url',
-      details: {
-        ...baseDetails,
-        targetOrigin: null,
-        isMixedContent: false,
-        isOnline: isOnline(),
-        reachable: null,
-      },
+      kind: kindFromProxyError(context.proxyErrorKind),
+      details: { ...baseDetails, proxyRunning: context.proxyErrorKind !== 'proxy-unreachable' },
     };
   }
 
-  const isHttpsPage = origin.startsWith('https://');
-  const isHttpTarget = parsed.protocol === 'http:';
-  const isMixedContent = isHttpsPage && isHttpTarget;
+  if (!parsed) {
+    return { kind: 'bad-url', details: { ...baseDetails, targetOrigin: null } };
+  }
+
+  const isMixedContent = origin.startsWith('https://') && parsed.protocol === 'http:';
 
   if (isMixedContent) {
-    return {
-      kind: 'mixed-content',
-      details: {
-        ...baseDetails,
-        isMixedContent: true,
-        isOnline: isOnline(),
-        reachable: null,
-      },
-    };
+    return { kind: 'mixed-content', details: { ...baseDetails, isMixedContent: true } };
   }
 
   if (!isOnline()) {
-    return {
-      kind: 'offline',
-      details: {
-        ...baseDetails,
-        isMixedContent: false,
-        isOnline: false,
-        reachable: null,
-      },
-    };
+    return { kind: 'offline', details: { ...baseDetails, isOnline: false } };
   }
 
-  if (rawMessage.toLowerCase().includes('abort') || rawMessage.toLowerCase().includes('timeout')) {
-    return {
-      kind: 'timeout',
-      details: {
-        ...baseDetails,
-        isMixedContent: false,
-        isOnline: true,
-        reachable: null,
-      },
-    };
+  const lowered = rawMessage.toLowerCase();
+  if (lowered.includes('abort') || lowered.includes('timeout') || lowered.includes('timed out')) {
+    return { kind: 'timeout', details: baseDetails };
   }
 
-  // Last lever: a no-cors probe. If the host answers, the original failure was
-  // a CORS rejection. If the probe also fails, the host is unreachable.
+  // Last lever: a no-cors probe separates "blocked" from "not there".
   const reachable = await probeReachable(url);
 
   return {
     kind: reachable ? 'cors' : 'unreachable',
-    details: {
-      ...baseDetails,
-      isMixedContent: false,
-      isOnline: true,
-      reachable,
-    },
+    details: { ...baseDetails, reachable },
   };
 }

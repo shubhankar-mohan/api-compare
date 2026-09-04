@@ -38,6 +38,25 @@ export function DiagnosticsPanel({ diagnosis }: DiagnosticsPanelProps) {
         <span className="text-muted-foreground">(none)</span>
       ),
     ],
+    [
+      'Stripped headers',
+      details.strippedHeaders.length ? (
+        <code key="st" className="text-xs break-all text-amber-700 dark:text-amber-500">
+          {details.strippedHeaders.join(', ')}
+        </code>
+      ) : (
+        <span className="text-muted-foreground">(none)</span>
+      ),
+    ],
+    ['Sent via proxy', details.viaProxy ? 'yes' : 'no'],
+    [
+      'Local proxy',
+      details.proxyRunning === null
+        ? 'not checked'
+        : details.proxyRunning
+        ? 'running'
+        : 'not running',
+    ],
     ['Raw error', <code key="re" className="text-xs break-all">{details.rawError}</code>],
   ];
 
@@ -110,6 +129,9 @@ function formatForClipboard(d: ErrorDiagnosis): string {
     `reachable (no-cors): ${details.reachable === null ? 'not probed' : details.reachable}`,
     `sent headers: ${details.sentHeaders.join(', ') || '(none)'}`,
     `likely unallowed: ${details.likelyUnallowedHeaders.join(', ') || '(none)'}`,
+    `stripped by browser: ${details.strippedHeaders.join(', ') || '(none)'}`,
+    `sent via proxy: ${details.viaProxy}`,
+    `local proxy: ${details.proxyRunning === null ? 'not checked' : details.proxyRunning ? 'running' : 'not running'}`,
     `raw error: ${details.rawError}`,
   ].join('\n');
 }

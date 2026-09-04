@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { CurlInput } from '@/components/CurlInput';
 import { SummaryCard } from '@/components/SummaryCard';
 import { DiffViewer } from '@/components/DiffViewer';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { TroubleshootSection } from '@/components/TroubleshootSection';
 import { CorsErrorCard } from '@/components/CorsErrorCard';
 import { CurlDiffLogo } from '@/components/CurlDiffLogo';
@@ -12,9 +13,12 @@ import { FeaturesSection, UsageGuideSection, FAQSection, BestPracticesSection, U
 import { parseCurl } from '@/lib/curlParser';
 import { executeComparison, ComparisonResult } from '@/lib/requestExecutor';
 import { computeDiff, formatJson } from '@/lib/diffAlgorithm';
+import { loadProxyConfig, saveProxyConfig, type ProxyConfig } from '@/lib/proxyClient';
+import { ProxySetupGuide } from '@/components/ProxySetupGuide';
 import { toast } from '@/hooks/use-toast';
-import { ExternalLink, ArrowRightLeft, Github, Bug, ChevronDown, ChevronUp } from 'lucide-react';
+import { ExternalLink, ArrowRightLeft, Github, Bug, ChevronDown, ChevronUp, TerminalSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
 const GITHUB_REPO_URL = 'https://github.com/shubhankar-mohan/api-compare';
 const GITHUB_ISSUES_URL = 'https://github.com/shubhankar-mohan/api-compare/issues';
@@ -31,9 +35,24 @@ const Index = () => {
   const [showMoreSections, setShowMoreSections] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ComparisonResult | null>(null);
-  const handleCompare = async (curlCommand: string, secondInput: string) => {
+  const [proxyConfig, setProxyConfig] = useState<ProxyConfig>(() => loadProxyConfig());
+  const [proxyDialogOpen, setProxyDialogOpen] = useState(false);
+  // Kept so the error cards can re-run the exact same comparison — previously
+  // there was no retry path at all, which left the CORS verify flow with
+  // nothing to hand back to.
+  const [lastInputs, setLastInputs] = useState<{ curl: string; second: string } | null>(null);
+
+  const runComparison = async (
+    curlCommand: string,
+    secondInput: string,
+    opts: { dropHeaders?: string[] } = {}
+  ) => {
     setIsLoading(true);
     setResult(null);
+    // Re-read rather than trusting state: the proxy may have just been enabled
+    // from inside a dialog rendered by the error card.
+    const proxy = loadProxyConfig();
+    setProxyConfig(proxy);
     try {
       const parsed = parseCurl(curlCommand);
       let parsed2;
@@ -66,8 +85,16 @@ const Index = () => {
         toast({ title: 'Invalid input', description: 'Please provide valid cURL commands or URLs', variant: 'destructive' });
         return;
       }
-      toast({ title: 'Executing requests...', description: `Comparing ${parsed.method} requests` });
-      const comparisonResult = await executeComparison(parsed, parsed2);
+      toast({
+        title: 'Executing requests...',
+        description: proxy.enabled
+          ? `Comparing ${parsed.method} requests via local proxy`
+          : `Comparing ${parsed.method} requests`,
+      });
+      const comparisonResult = await executeComparison(parsed, parsed2, {
+        proxy,
+        dropHeaders: opts.dropHeaders,
+      });
       setResult(comparisonResult);
       const hasDiff = comparisonResult.original.body !== comparisonResult.localhost.body || comparisonResult.original.status !== comparisonResult.localhost.status;
       toast({ title: 'Comparison complete', description: hasDiff ? 'Differences found between responses' : 'Responses are identical' });
@@ -78,9 +105,49 @@ const Index = () => {
     }
   };
 
+  const handleCompare = (curlCommand: string, secondInput: string) => {
+    setLastInputs({ curl: curlCommand, second: secondInput });
+    return runComparison(curlCommand, secondInput);
+  };
+
+  const handleRetry = () => {
+    if (!lastInputs) return;
+    runComparison(lastInputs.curl, lastInputs.second);
+  };
+
+  const handleRetryWithoutHeaders = (headers: string[]) => {
+    if (!lastInputs) return;
+    toast({
+      title: 'Retrying',
+      description: `Dropping ${headers.join(', ')} so the preflight has less to ask for.`,
+    });
+    runComparison(lastInputs.curl, lastInputs.second, { dropHeaders: headers });
+  };
+
+  const toggleProxy = () => {
+    if (proxyConfig.enabled) {
+      const next = { ...proxyConfig, enabled: false };
+      saveProxyConfig(next);
+      setProxyConfig(next);
+      toast({ title: 'Proxy off', description: 'Requests go directly from the browser again.' });
+    } else {
+      setProxyDialogOpen(true);
+    }
+  };
+
   const leftFormatted = result ? formatJson(result.original.body) : '';
   const rightFormatted = result ? formatJson(result.localhost.body) : '';
-  const bodyDiff = result ? computeDiff(leftFormatted, rightFormatted) : null;
+  // Computed during this component's own render, so a throw here would blank
+  // the page above the diff's error boundary. It only feeds the summary counts,
+  // so degrade to null and let DiffViewer surface the real error.
+  let bodyDiff: ReturnType<typeof computeDiff> | null = null;
+  if (result) {
+    try {
+      bodyDiff = computeDiff(leftFormatted, rightFormatted);
+    } catch {
+      bodyDiff = null;
+    }
+  }
 
   // Mirror Lane B's stats-skipped gate (src/lib/enhancedDiffAlgorithm.ts STATS_MAX_LINES = 3000)
   // so SummaryCard can show "Stats unavailable for large diffs" without lifting state from DiffViewer,
@@ -138,10 +205,40 @@ const Index = () => {
             {mode === 'curl-diff' ? (
               <>
                 <CurlInput onSubmit={handleCompare} isLoading={isLoading} />
+
+                {/* Where requests are sent from. Production APIs won't allow-list
+                    this origin, so routing through a proxy on the user's own
+                    machine is the only reliable way to reach them. */}
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span>Requests sent</span>
+                  <Badge
+                    variant={proxyConfig.enabled ? 'default' : 'secondary'}
+                    className="font-normal gap-1"
+                  >
+                    <TerminalSquare className="h-3 w-3" />
+                    {proxyConfig.enabled ? `via local proxy (${proxyConfig.url})` : 'directly from this browser'}
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={toggleProxy}
+                  >
+                    {proxyConfig.enabled ? 'Turn off' : 'Use local proxy'}
+                  </Button>
+                  {!proxyConfig.enabled && (
+                    <span className="hidden sm:inline">
+                      — needed for production APIs that can't allow-list this origin
+                    </span>
+                  )}
+                </div>
+
                 {result && (result.original.success && result.localhost.success ? (
                   <>
                     <SummaryCard original={result.original} localhost={result.localhost} hasDifferences={bodyDiff?.hasDifferences ?? false} statsSkipped={statsSkipped} />
-                    <DiffViewer original={result.original} localhost={result.localhost} />
+                    <ErrorBoundary label="Comparing these responses">
+                      <DiffViewer original={result.original} localhost={result.localhost} />
+                    </ErrorBoundary>
                   </>
                 ) : (
                   <div className="space-y-4">
@@ -149,6 +246,8 @@ const Index = () => {
                       <CorsErrorCard
                         label="Original"
                         response={result.original}
+                        onRetry={handleRetry}
+                        onRetryWithoutHeaders={handleRetryWithoutHeaders}
                         onSwitchToTextDiff={() => setMode('text-diff')}
                       />
                     )}
@@ -156,6 +255,8 @@ const Index = () => {
                       <CorsErrorCard
                         label="Localhost"
                         response={result.localhost}
+                        onRetry={handleRetry}
+                        onRetryWithoutHeaders={handleRetryWithoutHeaders}
                         onSwitchToTextDiff={() => setMode('text-diff')}
                       />
                     )}
@@ -222,6 +323,15 @@ const Index = () => {
           </div>
         </main>
       </div>
+
+      <ProxySetupGuide
+        open={proxyDialogOpen}
+        onOpenChange={setProxyDialogOpen}
+        onEnabled={() => {
+          setProxyConfig(loadProxyConfig());
+          handleRetry();
+        }}
+      />
 
       {/* Footer — simplified */}
       <footer className="border-t border-border/50 bg-card/50 relative z-10">

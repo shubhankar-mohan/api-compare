@@ -50,11 +50,13 @@ export function CorsInstallGuide({
     setState({ kind: 'running' });
     const result = await verifyCorsBypass(verifyUrl, verifyHeaders);
     setState(result);
-    if (result.kind === 'ok' && onVerified) {
-      // Give the success state a moment to register before closing.
+    if (result.kind === 'ok') {
+      // Close on success whether or not a retry handler was supplied. This used
+      // to sit inside `&& onVerified`, so when the caller omitted that prop the
+      // dialog announced "Closing…" and then stayed open forever.
       setTimeout(() => {
         onOpenChange(false);
-        onVerified();
+        onVerified?.();
       }, 1200);
     }
   };
