@@ -9,7 +9,7 @@
  * All persistence is localStorage-only — no backend, ever.
  */
 
-import type { NoiseClassifier } from './smartComparison';
+import { getClassifier, type NoiseClassifier } from './smartComparison';
 
 export type { NoiseClassifier };
 
@@ -53,8 +53,160 @@ const STORAGE_PREFIX = 'diffchecker:rules:';
 const MAX_ENDPOINT_LENGTH = 256;
 
 /**
+ * Check whether a rule's path matches a concrete JSON path.
+ *
+ * Rule path syntax (intentionally narrow):
+ * - exact match:                 "$.data.user.id"
+ * - leading wildcard descendant: "$..traceId"    (matches at any depth)
+ * - segment wildcard:            "$.items[*].id" (matches any array index)
+ *
+ * Both `$..foo` and `$.foo` match a top-level field. Comparison is
+ * case-sensitive. Each rule's regex is compiled once and cached on the rule
+ * object via a WeakMap, so repeated calls during a diff are O(1).
+ *
+ * Lives here rather than in the diff modules so both the tree diff and the
+ * legacy text path can use it without importing each other.
+ */
+const ruleMatcherCache = new WeakMap<NoiseRule, RegExp | null>();
+
+export function ruleMatchesPath(rule: NoiseRule, jsonPath: string): boolean {
+  let matcher = ruleMatcherCache.get(rule);
+  if (matcher === undefined) {
+    matcher = compileRulePath(rule.path);
+    ruleMatcherCache.set(rule, matcher);
+  }
+  if (!matcher) return false;
+  // Strip the leading `$` from the runtime path so it lines up with the regex
+  // (which had its leading `$` stripped at compile time).
+  const stripped = jsonPath.startsWith('$') ? jsonPath.slice(1) : jsonPath;
+  return matcher.test(stripped);
+}
+
+/**
+ * Maximum descendant (`..`) markers allowed in one rule path.
+ *
+ * Each marker is an unanchored wildcard. They are compiled to a linear form
+ * below, but every extra one still widens what the rule silences, and a path
+ * with many of them is far more likely to be hostile or corrupt than intended.
+ */
+const MAX_DESCENDANT_MARKERS = 3;
+const MAX_RULE_PATH_LENGTH = 512;
+
+/**
+ * Is this a rule path we are willing to store and apply?
+ *
+ * This exists because a rule that matches *everything* silences an entire
+ * endpoint — the diff reports "no differences" forever while the UI cheerfully
+ * shows "1 taught". The old `compileRulePath` returned `/^.*$/` for an empty
+ * path, so `" "`, `"$"` and `"$.."` all became catch-alls, and nothing
+ * validated a path on import. A rule must therefore name at least one concrete
+ * segment; pure-wildcard paths are rejected outright.
+ */
+export function isValidRulePath(rulePath: unknown): boolean {
+  if (typeof rulePath !== 'string') return false;
+
+  const trimmed = rulePath.trim();
+  if (!trimmed || trimmed.length > MAX_RULE_PATH_LENGTH) return false;
+
+  const body = trimmed.startsWith('$') ? trimmed.slice(1) : trimmed;
+  if (!body) return false; // bare "$"
+
+  // Segments between separators. "$.." and "." leave nothing behind.
+  const segments = body.split(/[.[\]]+/).filter(Boolean);
+  if (segments.length === 0) return false;
+
+  // "$.*" / "$..*" match every path; they are never a rule a user means.
+  if (segments.every((seg) => seg === '*')) return false;
+
+  const descendants = (body.match(/\.\./g) || []).length;
+  if (descendants > MAX_DESCENDANT_MARKERS) return false;
+
+  return true;
+}
+
+export function compileRulePath(rulePath: string): RegExp | null {
+  if (!isValidRulePath(rulePath)) return null;
+
+  let p = rulePath.trim();
+  if (p.startsWith('$')) p = p.slice(1);
+
+  let pattern = '';
+  let i = 0;
+  while (i < p.length) {
+    const ch = p[i];
+
+    if (ch === '.' && p[i + 1] === '.') {
+      // Descendant marker. Compiled as "(any number of whole segments)".
+      //
+      // The previous form was `(?:.*\.)?`, whose `.*` can cross segment
+      // boundaries; several of those in one anchored pattern backtrack
+      // catastrophically on a non-matching path (measured: 3.3s for nine
+      // markers). `[^.]*` cannot cross a dot, so this is linear.
+      pattern += '(?:[^.]*\\.)*';
+      i += 2;
+      continue;
+    }
+    if (ch === '.') {
+      pattern += '\\.';
+      i += 1;
+      continue;
+    }
+    if (ch === '[' && p[i + 1] === '*' && p[i + 2] === ']') {
+      pattern += '\\[\\d+\\]';
+      i += 3;
+      continue;
+    }
+    if (ch === '*') {
+      // A bare "*" means "one whole segment", not "any characters".
+      pattern += '[^.]*';
+      i += 1;
+      continue;
+    }
+    if (ch === '[' || ch === ']') {
+      pattern += '\\' + ch;
+      i += 1;
+      continue;
+    }
+    if ('+?^${}()|\\/'.includes(ch)) {
+      pattern += '\\' + ch;
+      i += 1;
+      continue;
+    }
+    pattern += ch;
+    i += 1;
+  }
+
+  try {
+    return new RegExp('^' + pattern + '$');
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Build the localStorage key for a canonicalized endpoint.
  */
+/**
+ * Full shape check for a stored or imported rule.
+ *
+ * Path validity is checked here rather than only at save time so that rules
+ * written by an older client — or hand-edited into localStorage — cannot keep
+ * silencing an endpoint after this validation was added.
+ */
+export function isValidRule(candidate: unknown): candidate is NoiseRule {
+  if (!candidate || typeof candidate !== 'object') return false;
+  const rule = candidate as Partial<NoiseRule>;
+  return (
+    typeof rule.path === 'string' &&
+    isValidRulePath(rule.path) &&
+    typeof rule.type === 'string' &&
+    getClassifier(rule.type) !== undefined &&
+    (rule.source === 'auto' || rule.source === 'manual') &&
+    typeof rule.createdAt === 'number' &&
+    Number.isFinite(rule.createdAt)
+  );
+}
+
 export function storageKey(canonical: string): string {
   return `${STORAGE_PREFIX}${canonical}`;
 }
@@ -155,7 +307,6 @@ export function loadRules(endpoint: string): NoiseRule[] {
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn(`[noiseRules] Malformed rule data for ${canonical}, ignoring.`, err);
     return [];
   }
@@ -171,17 +322,8 @@ export function loadRules(endpoint: string): NoiseRule[] {
 
   if (!candidate) return [];
 
-  // Filter out any rules that don't have the required shape
-  return candidate.filter((r): r is NoiseRule => {
-    if (!r || typeof r !== 'object') return false;
-    const rule = r as Partial<NoiseRule>;
-    return (
-      typeof rule.path === 'string' &&
-      typeof rule.type === 'string' &&
-      (rule.source === 'auto' || rule.source === 'manual') &&
-      typeof rule.createdAt === 'number'
-    );
-  });
+  // Drop anything malformed, including paths that would match everything.
+  return candidate.filter(isValidRule);
 }
 
 /**
@@ -233,6 +375,15 @@ export function forgetRule(endpoint: string, path: string): { ok: boolean; error
  * conflict policy in the CEO plan).
  */
 export function addRule(endpoint: string, rule: NoiseRule): { ok: boolean; error?: string } {
+  if (!isValidRulePath(rule.path)) {
+    return {
+      ok: false,
+      error: `"${rule.path}" is not a usable rule path — it would match every field on this endpoint.`,
+    };
+  }
+  if (!isValidRule(rule)) {
+    return { ok: false, error: `Rule for "${rule.path}" is malformed and was not saved.` };
+  }
   const existing = loadRules(endpoint);
   const filtered = existing.filter((r) => r.path !== rule.path);
   filtered.push(rule);
@@ -291,19 +442,9 @@ export function parseRulesFile(json: string): { ok: true; file: NoiseRulesFile }
     return { ok: false, error: 'File is missing required `rules` array.' };
   }
 
-  const validRules: NoiseRule[] = [];
-  for (const r of obj.rules) {
-    if (!r || typeof r !== 'object') continue;
-    const rule = r as Partial<NoiseRule>;
-    if (
-      typeof rule.path === 'string' &&
-      typeof rule.type === 'string' &&
-      (rule.source === 'auto' || rule.source === 'manual') &&
-      typeof rule.createdAt === 'number'
-    ) {
-      validRules.push(rule as NoiseRule);
-    }
-  }
+  // Malformed entries are dropped rather than rejecting the whole file, but a
+  // path that would silence the endpoint is never imported.
+  const validRules: NoiseRule[] = obj.rules.filter(isValidRule);
 
   return {
     ok: true,

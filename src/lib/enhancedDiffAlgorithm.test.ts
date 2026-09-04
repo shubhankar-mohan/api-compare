@@ -128,9 +128,15 @@ describe('computeEnhancedDiff — DiffOptions.ignorePaths regression (Lane A)', 
     // ignorePaths still strips traceId from the diff
     const allLines = [...result.left, ...result.right].map((l) => l.content).join('\n');
     expect(allLines).not.toContain('traceId');
-    // Rule marker is injected on the id line (not stripped — DiffOptions
-    // and noise rules are independent systems)
-    expect(allLines).toContain('NOISE:uuid:rule');
+
+    // The rule is reported on the line object, not encoded into the rendered
+    // text. Metadata inside `content` was forgeable by any API response, so
+    // it now travels out-of-band; `content` is verbatim server output.
+    expect(allLines).not.toContain('NOISE:');
+    const idRow = result.right.find((l) => (l.content || '').includes('"id"'));
+    expect(idRow?.noise).toEqual({ type: 'uuid', source: 'rule' });
+    // ...and suppression means it is genuinely not counted.
+    expect(result.hasDifferences).toBe(false);
   });
 
   it('omitting rules behaves identically to passing []', () => {

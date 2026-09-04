@@ -1,4 +1,5 @@
-import { ComparisonConfig } from './diffAlgorithm';
+import type { ComparisonConfig } from './diffTypes';
+import { levenshteinDistance } from './inlineSegments';
 
 /**
  * Enhanced diff algorithm that handles structural differences in config files
@@ -98,15 +99,17 @@ function normalizeLine(line: string, config?: ComparisonConfig): string {
     .replace(/\n/g, '')
     .replace(/\t/g, '  ');
   
-  // Normalize indentation
+  // Normalize indentation to whole 2-space levels.
+  //
+  // This used to be three chained replaces (4→2, then 3→2, then 5→2). Applied
+  // in sequence they collapsed *different* nesting depths onto the same value:
+  // 6 and 8 spaces both became 3, 10 and 12 both became 4. Lines at different
+  // depths then compared equal, so a field could match a same-named field in a
+  // different object. Rounding to a level is both correct and stable.
   const match = normalized.match(/^(\s*)(.*)/);
   if (match) {
     const [, indent, content] = match;
-    const normalizedIndent = indent
-      .replace(/    /g, '  ')
-      .replace(/   /g, '  ')
-      .replace(/     /g, '  ');
-    normalized = normalizedIndent + content;
+    normalized = '  '.repeat(Math.round(indent.length / 2)) + content;
   }
   
   return normalized.trimEnd();
@@ -282,40 +285,6 @@ function getCommonSuffixLength(str1: string, str2: string): number {
 }
 
 /**
- * Levenshtein distance for string similarity
- */
-function levenshteinDistance(str1: string, str2: string): number {
-  // Cap input length to avoid massive allocation
-  const MAX_LEN = 300;
-  const s1 = str1.length > MAX_LEN ? str1.substring(0, MAX_LEN) : str1;
-  const s2 = str2.length > MAX_LEN ? str2.substring(0, MAX_LEN) : str2;
-
-  const a = s1.length > s2.length ? s2 : s1;
-  const b = s1.length > s2.length ? s1 : s2;
-  const aLen = a.length;
-  const bLen = b.length;
-
-  let prev = new Array(aLen + 1);
-  let curr = new Array(aLen + 1);
-
-  for (let j = 0; j <= aLen; j++) prev[j] = j;
-
-  for (let i = 1; i <= bLen; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= aLen; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        curr[j] = prev[j - 1];
-      } else {
-        curr[j] = Math.min(prev[j - 1] + 1, curr[j - 1] + 1, prev[j] + 1);
-      }
-    }
-    [prev, curr] = [curr, prev];
-  }
-
-  return prev[aLen];
-}
-
-/**
  * Compute word-level diff between two strings
  */
 function computeWordDiff(leftLine: string, rightLine: string) {
@@ -413,28 +382,36 @@ export function computeStructuralDiff(
   // (uses module-level MAX_LINES_FOR_SIMILARITY shared with findStructuralMatches)
   const skipSimilarity = leftLines.length > MAX_LINES_FOR_SIMILARITY || rightLines.length > MAX_LINES_FOR_SIMILARITY;
 
-  // First, find similar lines that should be marked as modified
+  // Find similar lines that should be marked as modified.
+  //
+  // The candidate window is +/-5 rows, so only those rows are examined. The
+  // previous version scanned every right line and computed a Levenshtein
+  // distance *before* testing the position constraint, which made this pass
+  // O(N^2) in edit distance whenever no nearby line matched — 35 seconds of
+  // frozen main thread at 1400 lines. Normalized lines are also hoisted out of
+  // the inner loop instead of being recomputed N times each.
+  const SIMILARITY_WINDOW = 5;
+  const leftNorms = skipSimilarity ? [] : leftLines.map((l) => normalizeLine(l, config));
+  const rightNorms = skipSimilarity ? [] : rightLines.map((l) => normalizeLine(l, config));
+
   for (let i = 0; i < leftLines.length && !skipSimilarity; i++) {
     if (matches.has(i)) continue; // Already matched exactly
 
-    const leftNorm = normalizeLine(leftLines[i], config);
+    const leftNorm = leftNorms[i];
+    const lo = Math.max(0, i - SIMILARITY_WINDOW);
+    const hi = Math.min(rightLines.length - 1, i + SIMILARITY_WINDOW);
 
-    // Look for similar lines in the right side
-    for (let j = 0; j < rightLines.length; j++) {
+    for (let j = lo; j <= hi; j++) {
       if (rightUsed.has(j) || matchedRightIndices.has(j)) continue;
 
-      const rightNorm = normalizeLine(rightLines[j], config);
-      const similarity = calculateSimilarity(leftNorm, rightNorm);
-      
-      // Special handling for comments - if both are comments at similar positions
+      const rightNorm = rightNorms[j];
+
+      // Comments at nearby positions get a lower bar than ordinary lines.
       const bothComments = leftNorm.startsWith('#') && rightNorm.startsWith('#');
       const positionClose = Math.abs(i - j) <= 3;
-      
-      // Lower threshold for comments or if lines share significant structure
-      const threshold = (bothComments && positionClose) ? 0.3 : 0.4;
-      
-      // If lines are similar and at similar positions, mark as modified
-      if (similarity > threshold && Math.abs(i - j) <= 5) {
+      const threshold = bothComments && positionClose ? 0.3 : 0.4;
+
+      if (calculateSimilarity(leftNorm, rightNorm) > threshold) {
         modifiedPairs.set(i, j);
         rightUsed.add(j);
         break;

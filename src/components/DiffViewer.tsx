@@ -2,11 +2,11 @@ import { useMemo, useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Copy, Minus, Plus, Globe, Server, Code2, Rows3, FoldVertical, GitBranch, TrendingUp, GitMerge, Sparkles, Eye, EyeOff } from 'lucide-react';
+import { Copy, Minus, Plus, Globe, Server, Code2, Rows3, FoldVertical, GitBranch, TrendingUp, GitMerge, Sparkles, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { ApiResponse } from '@/lib/requestExecutor';
-import { computeDiff, formatJson, formatHeaders, DiffLine, DiffSegment } from '@/lib/diffAlgorithm';
+import { computeDiff, formatJson, formatHeaders, precisionWarnings, DiffLine, DiffSegment } from '@/lib/diffAlgorithm';
 import {
   computeEnhancedDiff,
   DiffOptions,
@@ -44,46 +44,14 @@ interface DiffViewerProps {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Noise marker parsing
+// Noise metadata
 //
-// preprocessJsonForComparison appends inline `/* NOISE:<type>:<source> */`
-// markers to lines that match a classifier or saved rule. The renderer
-// strips these markers before display and uses them to drive chip UI.
-
-interface NoiseMarker {
-  type: NoiseClassifier;
-  source: 'auto' | 'rule';
-}
-
-interface ParsedLine {
-  /** Line content with NOISE markers stripped (legacy TIMESTAMP/ID markers preserved). */
-  content: string;
-  markers: NoiseMarker[];
-  /** JSON path of the field on this line, parsed from `"key":` prefix. */
-  fieldKey: string | null;
-}
-
-const NOISE_MARKER_RE = /\s*\/\*\s*NOISE:([a-z0-9-]+):(auto|rule)\s*\*\//g;
-
-function parseNoiseMarkers(content: string): ParsedLine {
-  const markers: NoiseMarker[] = [];
-  let m: RegExpExecArray | null;
-  // Reset regex state (uses g flag)
-  NOISE_MARKER_RE.lastIndex = 0;
-  while ((m = NOISE_MARKER_RE.exec(content)) !== null) {
-    markers.push({
-      type: m[1] as NoiseClassifier,
-      source: m[2] as 'auto' | 'rule',
-    });
-  }
-  const stripped = content.replace(NOISE_MARKER_RE, '');
-  const keyMatch = stripped.match(/^\s*"([^"]+)"\s*:/);
-  return {
-    content: stripped,
-    markers,
-    fieldKey: keyMatch ? keyMatch[1] : null,
-  };
-}
+// `DiffLine.noise` and `DiffLine.fieldKey` are set by the diff engine and read
+// directly. They used to be encoded as `/* NOISE:<type>:<source> */` text
+// appended to `content` and re-parsed here — which meant a response containing
+// that literal string could forge one: this renderer would strip the "marker"
+// out of the user's own data and show a real difference as suppressed noise.
+// Line content is now rendered verbatim, exactly as the server sent it.
 
 /**
  * Truncate a long endpoint for toast display (per CEO plan v3 N3).
@@ -159,12 +127,12 @@ function DiffLineComponent({
   isFocused?: boolean;
   onFocus?: () => void;
 }) {
-  const parsed = useMemo(() => parseNoiseMarkers(line.content || ''), [line.content]);
-  const autoMarker = parsed.markers.find((m) => m.source === 'auto');
-  const ruleMarker = parsed.markers.find((m) => m.source === 'rule');
-  // A line is "noise-applied" when a rule marker is present AND the user
-  // hasn't toggled show-anyway. Such lines render greyed.
-  const noiseApplied = !!ruleMarker && !isShowAnyway;
+  const autoMarker = line.noise?.source === 'auto' ? line.noise : undefined;
+  const ruleMarker = line.noise?.source === 'rule' ? line.noise : undefined;
+  const legacyMarker = line.noise?.source === 'legacy' ? line.noise : undefined;
+  // Greyed when suppression actually applied — by a saved rule, or by the
+  // opt-in legacy heuristic — and the user hasn't toggled show-anyway.
+  const noiseApplied = !!(ruleMarker || legacyMarker) && !isShowAnyway;
 
   const bgClass = {
     added: 'bg-[hsl(var(--diff-added-bg))]',
@@ -211,20 +179,20 @@ function DiffLineComponent({
       <pre className={cn('flex-1 px-2 py-0.5 overflow-x-auto whitespace-pre', textClass)}>
         {line.type === 'modified' && line.segments ? (
           <InlineSegments
-            segments={line.segments.map((s) => ({ ...s, text: s.text.replace(NOISE_MARKER_RE, '') }))}
+            segments={line.segments}
             side={side}
           />
         ) : isJson && line.type === 'unchanged' ? (
-          <JsonSyntaxHighlight content={parsed.content || ' '} />
+          <JsonSyntaxHighlight content={line.content || ' '} />
         ) : (
-          parsed.content || ' '
+          line.content || ' '
         )}
         {/* Auto chip — only render on the right side to avoid duplication */}
         {autoMarker && side === 'right' && onTeach && (
           <Badge
             variant="outline"
             className="ml-2 cursor-pointer gap-1 px-2 py-0 text-[10px] font-normal border-primary/40 text-primary hover:bg-primary/10 align-middle"
-            onClick={() => onTeach(autoMarker.type, parsed.fieldKey)}
+            onClick={() => onTeach(autoMarker.type as NoiseClassifier, line.fieldKey ?? null)}
             title={`Teach DiffChecker that ${autoMarker.type} fields are noise on this endpoint`}
           >
             <Sparkles className="h-2.5 w-2.5" aria-hidden="true" />
@@ -432,10 +400,25 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                       (diffOptions.ignoreKeys && diffOptions.ignoreKeys.length > 0) ||
                       (diffOptions.ignorePaths && diffOptions.ignorePaths.length > 0);
 
+    // Precision warnings are derived from the RAW bodies. `formatJson` above
+    // already round-trips through JSON.parse, which is exactly where an
+    // oversized integer is rounded — by then there is nothing left to detect.
+    const warnings = precisionWarnings(original.body, localhost.body);
+    // Replace rather than append. The engine also scans the text it was handed,
+    // but that text has already been through formatJson, so its warning names
+    // the *rounded* literal ("...800 -> ...800") which reads as nonsense. The
+    // raw scan knows the original values, so it wins.
+    const withWarnings = <T extends { warnings?: string[] }>(result: T): T =>
+      warnings.length > 0 ? { ...result, warnings } : result;
+
     if (hasOptions || diffOptions.advancedMode !== false) {
-      return computeEnhancedDiff(leftFormatted, rightFormatted, diffOptions, endpointRules) as EnhancedDiffResult;
+      return withWarnings(
+        computeEnhancedDiff(leftFormatted, rightFormatted, diffOptions, endpointRules) as EnhancedDiffResult
+      );
     } else {
-      return computeDiff(leftFormatted, rightFormatted, { advancedMode: diffOptions.advancedMode, rules: endpointRules });
+      return withWarnings(
+        computeDiff(leftFormatted, rightFormatted, { advancedMode: diffOptions.advancedMode, rules: endpointRules })
+      );
     }
     // rulesVersion forces a recompute even when endpointRules reference hasn't changed
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -453,10 +436,22 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
         });
         return;
       }
-      // Build the rule path: prefer wildcard descendant match so the rule
+      // Build the rule path: prefer a wildcard descendant match so the rule
       // applies regardless of nesting depth (a UUID under `$.data.user.id`
       // and one under `$.id` should both be ignored after one click).
-      const path = fieldKey ? `$..${fieldKey}` : `$..*`;
+      //
+      // Rows without a field key are array elements. The old fallback here was
+      // `$..*`, which matches every path — it silently failed to compile, so
+      // the rule listed as "taught" and never matched anything. There is no
+      // sensible rule to write for such a row, so say so instead.
+      if (!fieldKey) {
+        toast({
+          title: 'Nothing to teach here',
+          description: 'This row is an array element, not a named field. Teach on a field instead.',
+        });
+        return;
+      }
+      const path = `$..${fieldKey}`;
       const rule: NoiseRule = {
         path,
         type: markerType,
@@ -593,8 +588,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
       const lines = focusedLine.side === 'left' ? bodyDiff.left : bodyDiff.right;
       const line = lines[focusedLine.line];
       if (!line) return;
-      const parsed = parseNoiseMarkers(line.content || '');
-      const fieldKey = parsed.fieldKey;
+      const fieldKey = line.fieldKey ?? null;
       if (!fieldKey) return;
 
       e.preventDefault();
@@ -609,7 +603,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
         // key (unknown classifier name; will round-trip but won't drive a
         // classifier-based chip).
         const markerType =
-          parsed.markers[0]?.type ||
+          line.noise?.type ||
           (fieldKey.toLowerCase().includes('id') ? 'uuid' : 'trace-id');
         handleTeach(markerType, fieldKey);
       }
@@ -808,12 +802,37 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
           </div>
           
           <TabsContent value="body" className="m-0 border-t mt-4">
+            {/* Correctness caveats the user must see. A precision warning in
+                particular can mean two visibly-different IDs compared equal,
+                so it cannot live only in the console. */}
+            {(bodyDiff.warnings?.length || bodyDiff.degraded) && (
+              <div className="mx-4 mt-4 space-y-2">
+                {bodyDiff.warnings?.map((warning) => (
+                  <div
+                    key={warning}
+                    className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs"
+                  >
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
+                    <span>{warning}</span>
+                  </div>
+                ))}
+                {bodyDiff.degraded && (
+                  <div className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
+                    <span>
+                      These responses are too large to align precisely, so lines were matched by
+                      position. Differences shown may be wider than the real change.
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
             {viewMode === 'diff' ? (
               <div className="grid grid-cols-2 divide-x">
                 <DiffPanel
                   title="Original Domain"
                   lines={bodyDiff.left}
-                  lineCount={original.body.split('\n').length}
+                  lineCount={bodyDiff.left.filter((l) => l.type !== 'empty').length}
                   removals={bodyDiff.removals}
                   side="left"
                   content={original.body}
@@ -830,7 +849,7 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                 <DiffPanel
                   title="Localhost"
                   lines={bodyDiff.right}
-                  lineCount={localhost.body.split('\n').length}
+                  lineCount={bodyDiff.right.filter((l) => l.type !== 'empty').length}
                   additions={bodyDiff.additions}
                   side="right"
                   content={localhost.body}
