@@ -1,8 +1,8 @@
 /**
  * Shared diff types.
  *
- * These live in their own module so that `diffAlgorithm`, `jsonTreeDiff` and
- * `structuralDiff` can all reference them without importing each other for
+ * These live in their own module so that `diffAlgorithm` and `jsonTreeDiff`
+ * can both reference them without importing each other for
  * types alone (which would create an import cycle). `diffAlgorithm` re-exports
  * every name here, so existing `from '@/lib/diffAlgorithm'` imports keep working.
  */

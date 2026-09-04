@@ -16,7 +16,7 @@ interface SummaryCardProps {
   original: ApiResponse;
   localhost: ApiResponse;
   hasDifferences: boolean;
-  /** True when computeDiffStatistics was skipped due to input size. */
+  /** True when statistics were skipped due to input size (STATS_MAX_LINES). */
   statsSkipped?: boolean;
 }
 

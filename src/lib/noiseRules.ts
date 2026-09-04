@@ -4,7 +4,7 @@
  * The wedge: when a user clicks a "Teach DiffChecker" chip on a noisy field,
  * we save a `NoiseRule` keyed by a canonicalized endpoint. Next time the
  * user runs a diff against the same endpoint, the rule is loaded and the
- * field is rendered collapsed/greyed (see DiffViewer + preprocessJsonForComparison).
+ * field is rendered greyed and not counted (see `jsonTreeDiff` and DiffViewer).
  *
  * All persistence is localStorage-only — no backend, ever.
  */

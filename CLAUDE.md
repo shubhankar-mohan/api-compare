@@ -42,7 +42,6 @@ src/
 │   ├── diffTypes.ts             # Shared diff types (no imports — breaks cycles)
 │   ├── inlineSegments.ts        # Sub-line word/char highlighting + Levenshtein
 │   ├── enhancedDiffAlgorithm.ts # Extended diff with structural change detection
-│   ├── structuralDiff.ts        # Legacy line matcher — no longer on any live path
 │   ├── noiseRules.ts            # Per-endpoint noise rules + JSONPath matching
 │   └── smartComparison.ts       # Field type detection (timestamps, IDs, etc.)
 proxy/

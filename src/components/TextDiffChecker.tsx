@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { computeDiff, formatJson, DiffLine, DiffSegment, ComparisonConfig } from '@/lib/diffAlgorithm';
-import { computeStructuralDiff } from '@/lib/structuralDiff';
 import {
   computeEnhancedDiff,
   DiffOptions,
@@ -353,11 +352,6 @@ export function TextDiffChecker() {
     // Use enhanced diff when options are set
     if (hasOptions || diffOptions.advancedMode !== false) {
       return computeEnhancedDiff(left, right, diffOptions) as EnhancedDiffResult;
-    }
-
-    // Use structural diff for YAML files to handle missing fields better
-    if (formatType === 'yaml') {
-      return computeStructuralDiff(left, right, config);
     }
 
     return computeDiff(left, right, { advancedMode: true, config });
