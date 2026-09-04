@@ -567,8 +567,9 @@ export function searchInDiff(
     try {
       searchPattern = new RegExp(query, options.caseSensitive ? 'g' : 'gi');
     } catch (err) {
+      // V8's message already reads "Invalid regular expression: /(/gi: ..."
       const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(`Invalid regular expression: ${detail}`);
+      throw new Error(/invalid regular expression/i.test(detail) ? detail : `Invalid regular expression: ${detail}`);
     }
   }
   

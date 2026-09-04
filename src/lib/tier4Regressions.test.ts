@@ -300,8 +300,18 @@ describe('F: navigateToPath resolves the exact row and tolerates any key', () =>
 });
 
 describe('F: searchInDiff reports an invalid regular expression instead of throwing raw', () => {
-  it('throws a message that names the problem', () => {
+  it('throws a message that names the problem exactly once', () => {
     const d = computeEnhancedDiff('{"a":1}', '{"a":2}');
-    expect(() => searchInDiff(d, '(', { regex: true })).toThrow(/regular expression/i);
+    let message = '';
+    try {
+      searchInDiff(d, '(', { regex: true });
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toMatch(/invalid regular expression/i);
+    // The engine's own message already starts with these words; the toast
+    // read "Invalid regular expression: Invalid regular expression: /(/gi".
+    expect(message.match(/invalid regular expression/gi)?.length).toBe(1);
+    expect(message).toContain('Unterminated group');
   });
 });
