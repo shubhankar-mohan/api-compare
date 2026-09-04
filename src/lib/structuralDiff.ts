@@ -1,4 +1,5 @@
-import { ComparisonConfig } from './diffAlgorithm';
+import type { ComparisonConfig } from './diffTypes';
+import { levenshteinDistance } from './inlineSegments';
 
 /**
  * Enhanced diff algorithm that handles structural differences in config files
@@ -98,19 +99,25 @@ function normalizeLine(line: string, config?: ComparisonConfig): string {
     .replace(/\n/g, '')
     .replace(/\t/g, '  ');
   
-  // Normalize indentation
+  // Normalize indentation to whole 2-space levels.
+  //
+  // This used to be three chained replaces (4→2, then 3→2, then 5→2). Applied
+  // in sequence they collapsed *different* nesting depths onto the same value:
+  // 6 and 8 spaces both became 3, 10 and 12 both became 4. Lines at different
+  // depths then compared equal, so a field could match a same-named field in a
+  // different object. Rounding to a level is both correct and stable.
   const match = normalized.match(/^(\s*)(.*)/);
   if (match) {
     const [, indent, content] = match;
-    const normalizedIndent = indent
-      .replace(/    /g, '  ')
-      .replace(/   /g, '  ')
-      .replace(/     /g, '  ');
-    normalized = normalizedIndent + content;
+    normalized = '  '.repeat(Math.round(indent.length / 2)) + content;
   }
   
   return normalized.trimEnd();
 }
+
+// Skip expensive per-line scans (similarity refinement and pass 3 of
+// findStructuralMatches) once either side exceeds this many lines.
+const MAX_LINES_FOR_SIMILARITY = 1500;
 
 /**
  * Find matching lines based on structure, not just position
@@ -182,29 +189,55 @@ export function findStructuralMatches(
     }
   }
   
-  // Third pass: match key-value pairs even if at different positions
-  for (let i = 0; i < leftStructured.length; i++) {
-    if (matches.has(i)) continue;
-    
-    const leftLine = leftStructured[i];
-    if (!leftLine.key) continue;
-    
-    // Find matching key in right side
+  // Third pass: match key-value pairs even if at different positions.
+  // Skip entirely for very large inputs — the index build itself is O(N)
+  // and pass 3's contribution is marginal vs the cost on huge YAML/config
+  // payloads. Mirrors the MAX_LINES_FOR_SIMILARITY gate in computeStructuralDiff.
+  const skipSimilarity =
+    leftStructured.length > MAX_LINES_FOR_SIMILARITY ||
+    rightStructured.length > MAX_LINES_FOR_SIMILARITY;
+
+  if (!skipSimilarity) {
+    // Build an index of right-side lines by key so we only iterate candidates
+    // that share the key, instead of scanning all N right lines per left line.
+    const rightByKey = new Map<string, number[]>();
     for (let j = 0; j < rightStructured.length; j++) {
-      if (usedRight.has(j)) continue;
-      
-      const rightLine = rightStructured[j];
-      
-      if (leftLine.key === rightLine.key &&
-          leftLine.value === rightLine.value &&
-          Math.abs(leftLine.indent - rightLine.indent) <= 1) {
-        matches.set(i, j);
-        usedRight.add(j);
-        break;
+      const k = rightStructured[j].key;
+      if (!k) continue;
+      let bucket = rightByKey.get(k);
+      if (!bucket) {
+        bucket = [];
+        rightByKey.set(k, bucket);
+      }
+      bucket.push(j);
+    }
+
+    for (let i = 0; i < leftStructured.length; i++) {
+      if (matches.has(i)) continue;
+
+      const leftLine = leftStructured[i];
+      if (!leftLine.key) continue;
+
+      const candidates = rightByKey.get(leftLine.key);
+      if (!candidates) continue;
+
+      // Iterate only right indexes that share the key. Preserve original
+      // tiebreaker: first unmatched candidate (insertion order = ascending index).
+      for (const j of candidates) {
+        if (usedRight.has(j)) continue;
+
+        const rightLine = rightStructured[j];
+
+        if (leftLine.value === rightLine.value &&
+            Math.abs(leftLine.indent - rightLine.indent) <= 1) {
+          matches.set(i, j);
+          usedRight.add(j);
+          break;
+        }
       }
     }
   }
-  
+
   return matches;
 }
 
@@ -249,40 +282,6 @@ function getCommonSuffixLength(str1: string, str2: string): number {
     i++;
   }
   return i;
-}
-
-/**
- * Levenshtein distance for string similarity
- */
-function levenshteinDistance(str1: string, str2: string): number {
-  // Cap input length to avoid massive allocation
-  const MAX_LEN = 300;
-  const s1 = str1.length > MAX_LEN ? str1.substring(0, MAX_LEN) : str1;
-  const s2 = str2.length > MAX_LEN ? str2.substring(0, MAX_LEN) : str2;
-
-  const a = s1.length > s2.length ? s2 : s1;
-  const b = s1.length > s2.length ? s1 : s2;
-  const aLen = a.length;
-  const bLen = b.length;
-
-  let prev = new Array(aLen + 1);
-  let curr = new Array(aLen + 1);
-
-  for (let j = 0; j <= aLen; j++) prev[j] = j;
-
-  for (let i = 1; i <= bLen; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= aLen; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        curr[j] = prev[j - 1];
-      } else {
-        curr[j] = Math.min(prev[j - 1] + 1, curr[j - 1] + 1, prev[j] + 1);
-      }
-    }
-    [prev, curr] = [curr, prev];
-  }
-
-  return prev[aLen];
 }
 
 /**
@@ -380,31 +379,39 @@ export function computeStructuralDiff(
   const modifiedPairs = new Map<number, number>(); // Track similar but not identical lines
 
   // Skip expensive similarity search for very large diffs to avoid page crashes
-  const MAX_LINES_FOR_SIMILARITY = 1500;
+  // (uses module-level MAX_LINES_FOR_SIMILARITY shared with findStructuralMatches)
   const skipSimilarity = leftLines.length > MAX_LINES_FOR_SIMILARITY || rightLines.length > MAX_LINES_FOR_SIMILARITY;
 
-  // First, find similar lines that should be marked as modified
+  // Find similar lines that should be marked as modified.
+  //
+  // The candidate window is +/-5 rows, so only those rows are examined. The
+  // previous version scanned every right line and computed a Levenshtein
+  // distance *before* testing the position constraint, which made this pass
+  // O(N^2) in edit distance whenever no nearby line matched — 35 seconds of
+  // frozen main thread at 1400 lines. Normalized lines are also hoisted out of
+  // the inner loop instead of being recomputed N times each.
+  const SIMILARITY_WINDOW = 5;
+  const leftNorms = skipSimilarity ? [] : leftLines.map((l) => normalizeLine(l, config));
+  const rightNorms = skipSimilarity ? [] : rightLines.map((l) => normalizeLine(l, config));
+
   for (let i = 0; i < leftLines.length && !skipSimilarity; i++) {
     if (matches.has(i)) continue; // Already matched exactly
 
-    const leftNorm = normalizeLine(leftLines[i], config);
+    const leftNorm = leftNorms[i];
+    const lo = Math.max(0, i - SIMILARITY_WINDOW);
+    const hi = Math.min(rightLines.length - 1, i + SIMILARITY_WINDOW);
 
-    // Look for similar lines in the right side
-    for (let j = 0; j < rightLines.length; j++) {
+    for (let j = lo; j <= hi; j++) {
       if (rightUsed.has(j) || matchedRightIndices.has(j)) continue;
 
-      const rightNorm = normalizeLine(rightLines[j], config);
-      const similarity = calculateSimilarity(leftNorm, rightNorm);
-      
-      // Special handling for comments - if both are comments at similar positions
+      const rightNorm = rightNorms[j];
+
+      // Comments at nearby positions get a lower bar than ordinary lines.
       const bothComments = leftNorm.startsWith('#') && rightNorm.startsWith('#');
       const positionClose = Math.abs(i - j) <= 3;
-      
-      // Lower threshold for comments or if lines share significant structure
-      const threshold = (bothComments && positionClose) ? 0.3 : 0.4;
-      
-      // If lines are similar and at similar positions, mark as modified
-      if (similarity > threshold && Math.abs(i - j) <= 5) {
+      const threshold = bothComments && positionClose ? 0.3 : 0.4;
+
+      if (calculateSimilarity(leftNorm, rightNorm) > threshold) {
         modifiedPairs.set(i, j);
         rightUsed.add(j);
         break;

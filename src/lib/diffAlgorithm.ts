@@ -1,677 +1,407 @@
-import { detectFieldType } from './smartComparison';
-import { computeStructuralDiff } from './structuralDiff';
+import { detectFieldType, CLASSIFIERS } from './smartComparison';
+import { ruleMatchesPath, type NoiseRule } from './noiseRules';
+import { computeJsonTreeDiff } from './jsonTreeDiff';
+import { calculateSimilarity, computeInlineSegments, clearSimilarityCache } from './inlineSegments';
+import { alignSequences, type AlignOp } from './sequenceAlign';
+import type {
+  DiffLine,
+  DiffLineType,
+  DiffResult,
+  DiffSegment,
+  ComparisonConfig,
+  NoiseAnnotation,
+} from './diffTypes';
 
-export type DiffLineType = 'added' | 'removed' | 'unchanged' | 'empty' | 'modified';
+// Re-exported so existing `from '@/lib/diffAlgorithm'` imports keep working.
+export type { DiffLine, DiffLineType, DiffResult, DiffSegment, ComparisonConfig, NoiseAnnotation };
+export { clearSimilarityCache };
 
-export interface DiffSegment {
-  text: string;
-  type: 'unchanged' | 'added' | 'removed';
+/**
+ * Budget for the LCS table, in cells, shared by the text and array paths.
+ *
+ * The budget applies after the common prefix and suffix are trimmed (see
+ * `sequenceAlign.ts`), so a large document with a small change never hits it.
+ *
+ * This replaces a flat line-count cap. A count-based guard creates an inverted
+ * cliff — the *worst* input sits just below the threshold, and one line more
+ * flips to a positional zip that reports a single insertion as a full rewrite
+ * (measured: 1499 lines gave +1/-0 in 82ms; 1500 gave +751/-750 in 4ms). It
+ * also rejected cheap asymmetric inputs like 5000x20.
+ *
+ * A cell budget tracks the thing that actually costs: 16M cells of Int32Array
+ * is 64 MB, and 3000x3000 (9M) completes well inside the project's budget.
+ * Anything past it degrades — and says so via `degraded`.
+ */
+const MAX_LCS_CELLS = 16_000_000;
+
+/** Minimum normalized similarity for two lines to pair into one `modified` row. */
+const MODIFIED_PAIR_THRESHOLD = 0.3;
+
+export interface ComputeDiffOptions {
+  advancedMode?: boolean;
+  config?: ComparisonConfig;
+  rules?: NoiseRule[];
+  /**
+   * Opt in to the legacy heuristic that erased id-shaped and timestamp-shaped
+   * values before comparing. Off by default — see `JsonTreeDiffOptions`.
+   */
+  legacyAutoIgnore?: boolean;
+  /** Render object keys sorted on both sides so key order never diffs. */
+  sortKeys?: boolean;
+  /** Treat "5" and 5 as equal. Mirrors the Diff Options panel switch. */
+  semanticComparison?: boolean;
+  /** Compare strings case-insensitively. */
+  ignoreCase?: boolean;
+  /** Collapse runs of whitespace in strings before comparing. */
+  ignoreWhitespace?: boolean;
 }
 
-export interface DiffLine {
-  content: string;
-  type: DiffLineType;
-  lineNumber: number | null;
-  segments?: DiffSegment[]; // For inline word-level diff
+// ── normalization (text path) ──────────────────────────────────────────────
+
+/**
+ * Characters that are invisible or that masquerade as a plain space.
+ *
+ * These are PRESERVED by default. They used to be erased on every comparison
+ * with no way to opt out, which meant a zero-width space or NBSP pasted in from
+ * a wiki or Slack — the single most common "why won't this parse" cause — made
+ * the diff report "no differences". Hiding the thing the user came to find is
+ * the worst outcome available, so finding it is now the default and ignoring it
+ * is the opt-in.
+ */
+const INVISIBLE_STRIP = /[\u0000-\u001F\u007F-\u009F\u200B-\u200D\uFEFF\uE000-\uF8FF]/g;
+const INVISIBLE_TO_SPACE = /[\u00A0\u2000-\u200A\u202F\u3000]/g;
+
+/** Fold invisible characters away, for comparison or for detection. */
+export function stripInvisible(text: string): string {
+  return text.replace(INVISIBLE_STRIP, '').replace(INVISIBLE_TO_SPACE, ' ');
 }
 
-export interface DiffResult {
-  left: DiffLine[];
-  right: DiffLine[];
-  additions: number;
-  removals: number;
-  hasDifferences: boolean;
-}
+function normalizeLine(line: string, config?: ComparisonConfig): string {
+  let normalized = line;
 
-// Maximum number of lines for full LCS (O(m*n) memory/time)
-// Beyond this, fall back to a simpler diff to avoid page crashes
-const LCS_MAX_LINES = 1500;
-
-// Longest Common Subsequence algorithm for optimal diff
-function lcs<T>(a: T[], b: T[]): number[][] {
-  const m = a.length;
-  const n = b.length;
-
-  // Guard: if inputs are too large, the O(m*n) table will crash the browser
-  if (m > LCS_MAX_LINES || n > LCS_MAX_LINES) {
-    // Return a dummy DP table that forces simple line-by-line comparison
-    // (all zeros means no common subsequence found → every line is a diff)
-    return Array(m + 1).fill(null).map(() => [0]);
+  // Line endings. A stray CR from a CRLF file is rarely the difference anyone
+  // is hunting, so it is folded by default — but it is a real switch now.
+  if (config?.ignoreLineEndings !== false) {
+    normalized = normalized
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/\n/g, '');
   }
 
-  const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+  if (config?.ignoreInvisibleCharacters === true) {
+    normalized = stripInvisible(normalized);
+  }
 
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (a[i - 1] === b[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-      }
+  normalized = normalized.replace(/\t/g, '  ');
+
+  // Indentation is structure in YAML, so an explicit `false` must be honoured
+  // here rather than overridden by format type.
+  if (config?.normalizeIndentation !== false) {
+    // Indentation is spaces and tabs specifically, and the remainder must be
+    // matched with [\s\S] rather than `.` — `.` excludes \r, so rebuilding the
+    // line as indent + content silently deleted a CR the caller asked to keep.
+    const match = normalized.match(/^([ \t]*)([\s\S]*)$/);
+    if (match) {
+      const [, indent, content] = match;
+      const indentLevel = Math.round(indent.length / 2);
+      normalized = '  '.repeat(indentLevel) + content;
     }
   }
 
-  return dp;
+  if (config?.ignoreTrailingWhitespace !== false) {
+    normalized =
+      config?.ignoreLineEndings === false
+        ? normalized.replace(/[^\S\r]+$/, '') // keep a deliberate CR
+        : normalized.trimEnd();
+  }
+
+  if (config?.ignoreWhitespace) {
+    normalized = normalized.replace(/\s+/g, ' ').trim();
+  }
+
+  // NOTE: there were two YAML-specific rewrites here — stripping quotes around
+  // an end-of-line value, and collapsing every `\s*:\s*` to ': '. Both are
+  // lossy, and both were unreachable dead code while YAML routed through
+  // `computeStructuralDiff`. Sending YAML down this path activated them, and
+  // they made YAML mode *worse than plain text*: `"yes"` vs `yes` (string vs
+  // boolean), `"3"` vs `3`, `""` vs null, and even `containerPort:8080`
+  // (invalid YAML) vs `containerPort: 8080` all reported "no differences".
+  // Diffing a broken manifest against a working one is the whole point of the
+  // mode, so the rewrites are gone rather than patched.
+
+  return normalized;
 }
 
-// Cache for similarity calculations to avoid redundant computations
-const similarityCache = new Map<string, number>();
+// ── text diff ──────────────────────────────────────────────────────────────
 
-// Calculate similarity between two strings (0-1)
-function calculateSimilarity(str1: string, str2: string): number {
-  if (str1 === str2) return 1;
-  if (!str1 || !str2) return 0;
-  
-  // Create cache key - use full content hash for short strings, sampled for long strings
-  const sample1 = str1.length <= 100 ? str1 : `${str1.length}:${str1.substring(0, 50)}:${str1.substring(str1.length - 50)}`;
-  const sample2 = str2.length <= 100 ? str2 : `${str2.length}:${str2.substring(0, 50)}:${str2.substring(str2.length - 50)}`;
-  const cacheKey = `${sample1}|||${sample2}`;
-  
-  // Check cache first
-  if (similarityCache.has(cacheKey)) {
-    return similarityCache.get(cacheKey)!;
-  }
-  
-  const longer = str1.length > str2.length ? str1 : str2;
-  const shorter = str1.length > str2.length ? str2 : str1;
-  
-  if (longer.length === 0) return 1;
-  
-  const editDistance = levenshteinDistance(longer, shorter);
-  const similarity = (longer.length - editDistance) / longer.length;
-  
-  // Cache the result (limit cache size to prevent memory issues)
-  if (similarityCache.size > 1000) {
-    // Clear half the cache to avoid frequent single-item evictions
-    const keys = Array.from(similarityCache.keys());
-    for (let k = 0; k < 500; k++) {
-      similarityCache.delete(keys[k]);
-    }
-  }
-  similarityCache.set(cacheKey, similarity);
-  
-  return similarity;
-}
-
-// Levenshtein distance for string similarity
-function levenshteinDistance(str1: string, str2: string): number {
-  // Cap input length to avoid massive O(n*m) allocation
-  const MAX_LEN = 300;
-  const s1 = str1.length > MAX_LEN ? str1.substring(0, MAX_LEN) : str1;
-  const s2 = str2.length > MAX_LEN ? str2.substring(0, MAX_LEN) : str2;
-
-  // Use single-row optimization: O(min(m,n)) space instead of O(m*n)
-  const a = s1.length > s2.length ? s2 : s1;
-  const b = s1.length > s2.length ? s1 : s2;
-  const aLen = a.length;
-  const bLen = b.length;
-
-  let prev = new Array(aLen + 1);
-  let curr = new Array(aLen + 1);
-
-  for (let j = 0; j <= aLen; j++) prev[j] = j;
-
-  for (let i = 1; i <= bLen; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= aLen; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        curr[j] = prev[j - 1];
-      } else {
-        curr[j] = Math.min(prev[j - 1] + 1, curr[j - 1] + 1, prev[j] + 1);
-      }
-    }
-    [prev, curr] = [curr, prev];
-  }
-
-  return prev[aLen];
-}
-
-// Compute character-level diff for more precise highlighting
-function computeCharDiff(leftLine: string, rightLine: string): { leftSegments: DiffSegment[]; rightSegments: DiffSegment[] } {
-  // Skip character-level diff for very long lines to improve performance
-  if (leftLine.length > 500 || rightLine.length > 500) {
-    return {
-      leftSegments: [{ text: leftLine, type: 'removed' }],
-      rightSegments: [{ text: rightLine, type: 'added' }]
-    };
-  }
-  
-  const leftChars = leftLine.split('');
-  const rightChars = rightLine.split('');
-  
-  const dp = lcs(leftChars, rightChars);
-  
-  const leftSegments: DiffSegment[] = [];
-  const rightSegments: DiffSegment[] = [];
-  
-  let i = leftChars.length;
-  let j = rightChars.length;
-  
-  const tempLeft: { char: string; type: 'unchanged' | 'removed' }[] = [];
-  const tempRight: { char: string; type: 'unchanged' | 'added' }[] = [];
-  
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && leftChars[i - 1] === rightChars[j - 1]) {
-      tempLeft.unshift({ char: leftChars[i - 1], type: 'unchanged' });
-      tempRight.unshift({ char: rightChars[j - 1], type: 'unchanged' });
-      i--;
-      j--;
-    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      tempRight.unshift({ char: rightChars[j - 1], type: 'added' });
-      j--;
-    } else if (i > 0) {
-      tempLeft.unshift({ char: leftChars[i - 1], type: 'removed' });
-      i--;
-    }
-  }
-  
-  // Merge consecutive segments of the same type
-  const mergeSegments = (
-    items: { char: string; type: 'unchanged' | 'removed' | 'added' }[]
-  ): DiffSegment[] => {
-    const result: DiffSegment[] = [];
-    for (const item of items) {
-      if (result.length > 0 && result[result.length - 1].type === item.type) {
-        result[result.length - 1].text += item.char;
-      } else {
-        result.push({ text: item.char, type: item.type });
-      }
-    }
-    return result;
-  };
-  
-  return {
-    leftSegments: mergeSegments(tempLeft),
-    rightSegments: mergeSegments(tempRight),
-  };
-}
-
-// Compute word-level diff between two strings
-function computeWordDiff(leftLine: string, rightLine: string): { leftSegments: DiffSegment[]; rightSegments: DiffSegment[] } {
-  // Skip expensive diff for very long lines
-  if (leftLine.length > 1000 || rightLine.length > 1000) {
-    return {
-      leftSegments: [{ text: leftLine, type: 'removed' }],
-      rightSegments: [{ text: rightLine, type: 'added' }]
-    };
-  }
-  
-  // For better granularity, use character-level diff for lines with any similarity
-  const similarity = calculateSimilarity(leftLine, rightLine);
-  
-  // Use character-level diff for lines with at least 20% similarity for more precise highlighting
-  // This will catch JSON property changes, number changes, etc.
-  if (similarity > 0.2 && leftLine.length < 500 && rightLine.length < 500) {
-    return computeCharDiff(leftLine, rightLine);
-  }
-  
-  // Otherwise, use word-level diff
-  const tokenize = (str: string): string[] => {
-    const tokens: string[] = [];
-    let current = '';
-    for (const char of str) {
-      if (/\s/.test(char)) {
-        if (current) {
-          tokens.push(current);
-          current = '';
-        }
-        tokens.push(char);
-      } else {
-        current += char;
-      }
-    }
-    if (current) tokens.push(current);
-    return tokens;
-  };
-
-  const leftTokens = tokenize(leftLine);
-  const rightTokens = tokenize(rightLine);
-
-  const dp = lcs(leftTokens, rightTokens);
-
-  const leftSegments: DiffSegment[] = [];
-  const rightSegments: DiffSegment[] = [];
-
-  let i = leftTokens.length;
-  let j = rightTokens.length;
-
-  const tempLeft: { token: string; type: 'unchanged' | 'removed' }[] = [];
-  const tempRight: { token: string; type: 'unchanged' | 'added' }[] = [];
-
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && leftTokens[i - 1] === rightTokens[j - 1]) {
-      tempLeft.unshift({ token: leftTokens[i - 1], type: 'unchanged' });
-      tempRight.unshift({ token: rightTokens[j - 1], type: 'unchanged' });
-      i--;
-      j--;
-    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      tempRight.unshift({ token: rightTokens[j - 1], type: 'added' });
-      j--;
-    } else if (i > 0) {
-      tempLeft.unshift({ token: leftTokens[i - 1], type: 'removed' });
-      i--;
-    }
-  }
-
-  // Merge consecutive segments of the same type
-  const mergeSegments = <T extends 'unchanged' | 'removed' | 'added'>(
-    items: { token: string; type: T }[]
-  ): DiffSegment[] => {
-    const result: DiffSegment[] = [];
-    for (const item of items) {
-      if (result.length > 0 && result[result.length - 1].type === item.type) {
-        result[result.length - 1].text += item.token;
-      } else {
-        result.push({ text: item.token, type: item.type });
-      }
-    }
-    return result;
-  };
-
-  return {
-    leftSegments: mergeSegments(tempLeft),
-    rightSegments: mergeSegments(tempRight),
-  };
-}
-
-// Simple diff for very small texts with normalization
-function computeSimpleDiffWithNormalization(
-  leftLines: string[], 
+/**
+ * Turn an edit script into aligned rows.
+ *
+ * A run of deletions immediately followed by a run of insertions is the shape
+ * of an edit rather than a delete-plus-insert, so those are paired into
+ * `modified` rows when the lines are similar enough to be worth an inline
+ * highlight. Anything unpaired stays a plain delete or insert — which is what
+ * makes a lone insertion report as exactly one addition.
+ */
+function rowsFromOps(
+  ops: AlignOp[],
+  leftLines: string[],
   rightLines: string[],
-  leftNormalized: string[],
-  rightNormalized: string[]
+  leftNorm: string[],
+  rightNorm: string[],
+  advanced: boolean
 ): DiffResult {
   const left: DiffLine[] = [];
   const right: DiffLine[] = [];
   let additions = 0;
   let removals = 0;
-  
-  const maxLength = Math.max(leftLines.length, rightLines.length);
-  
-  for (let i = 0; i < maxLength; i++) {
-    if (i < leftLines.length && i < rightLines.length) {
-      // Compare normalized versions
-      if (leftNormalized[i] === rightNormalized[i]) {
-        left.push({ content: leftLines[i], type: 'unchanged', lineNumber: i + 1 });
-        right.push({ content: rightLines[i], type: 'unchanged', lineNumber: i + 1 });
-      } else {
-        left.push({ content: leftLines[i], type: 'removed', lineNumber: i + 1 });
-        right.push({ content: rightLines[i], type: 'added', lineNumber: i + 1 });
-        removals++;
-        additions++;
-      }
-    } else if (i < leftLines.length) {
-      left.push({ content: leftLines[i], type: 'removed', lineNumber: i + 1 });
-      right.push({ content: '', type: 'empty', lineNumber: null });
-      removals++;
-    } else {
-      left.push({ content: '', type: 'empty', lineNumber: null });
-      right.push({ content: rightLines[i], type: 'added', lineNumber: i + 1 });
-      additions++;
-    }
-  }
-  
-  return {
-    left,
-    right,
-    additions,
-    removals,
-    hasDifferences: additions > 0 || removals > 0
+
+  const emitEq = (i: number, j: number) => {
+    left.push({ content: leftLines[i], type: 'unchanged', lineNumber: i + 1 });
+    right.push({ content: rightLines[j], type: 'unchanged', lineNumber: j + 1 });
   };
-}
+  const emitDel = (i: number) => {
+    left.push({ content: leftLines[i], type: 'removed', lineNumber: i + 1 });
+    right.push({ content: '', type: 'empty', lineNumber: null });
+    removals++;
+  };
+  const emitAdd = (j: number) => {
+    left.push({ content: '', type: 'empty', lineNumber: null });
+    right.push({ content: rightLines[j], type: 'added', lineNumber: j + 1 });
+    additions++;
+  };
+  const emitMod = (i: number, j: number) => {
+    const segs = advanced ? computeInlineSegments(leftLines[i], rightLines[j]) : undefined;
+    left.push({ content: leftLines[i], type: 'modified', lineNumber: i + 1, segments: segs?.leftSegments });
+    right.push({ content: rightLines[j], type: 'modified', lineNumber: j + 1, segments: segs?.rightSegments });
+    removals++;
+    additions++;
+  };
 
-// Configuration for comprehensive comparison
-export interface ComparisonConfig {
-  ignoreWhitespace?: boolean;
-  ignoreTrailingWhitespace?: boolean;
-  ignoreLineEndings?: boolean;
-  ignoreInvisibleCharacters?: boolean;
-  normalizeIndentation?: boolean;
-  tabSize?: number;
-  formatType?: 'json' | 'yaml' | 'xml' | 'text' | 'config';
-}
-
-// Normalize line for comparison
-function normalizeLine(line: string, config?: ComparisonConfig): string {
-  let normalized = line;
-  
-  // First, normalize line endings (do this first!)
-  normalized = normalized
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/\n/g, ''); // Remove any line endings within the line
-  
-  // Remove ALL invisible and problematic Unicode characters
-  normalized = normalized
-    .replace(/[\u0000-\u001F]/g, '') // Control characters
-    .replace(/[\u007F-\u009F]/g, '') // Delete and C1 control codes  
-    .replace(/\u200B/g, '')  // Zero-width space
-    .replace(/\u200C/g, '')  // Zero-width non-joiner
-    .replace(/\u200D/g, '')  // Zero-width joiner
-    .replace(/\uFEFF/g, '')  // BOM
-    .replace(/\u00A0/g, ' ') // Non-breaking space
-    .replace(/[\u2000-\u200A]/g, ' ') // Various Unicode spaces
-    .replace(/\u202F/g, ' ') // Narrow no-break space
-    .replace(/\u3000/g, ' ') // Ideographic space
-    .replace(/[\uE000-\uF8FF]/g, ''); // Private use area
-  
-  // Convert ALL tabs to spaces consistently
-  normalized = normalized.replace(/\t/g, '  ');
-  
-  // Handle leading whitespace/indentation
-  if (config?.normalizeIndentation !== false || config?.formatType === 'yaml') {
-    // For YAML and config files, normalize indentation more aggressively
-    const match = normalized.match(/^(\s*)(.*)/);
-    if (match) {
-      const [, indent, content] = match;
-      // Count the indent level (treat any 2-5 space group as one indent level)
-      const indentLevel = Math.round(indent.length / 2);
-      const normalizedIndent = '  '.repeat(indentLevel);
-      normalized = normalizedIndent + content;
+  let k = 0;
+  while (k < ops.length) {
+    const op = ops[k];
+    if (op.op === 'match') {
+      emitEq(op.i, op.j);
+      k++;
+      continue;
     }
+
+    // Collect the current run of deletions then insertions.
+    const dels: number[] = [];
+    const adds: number[] = [];
+    while (k < ops.length && ops[k].op === 'del') dels.push((ops[k++] as { i: number }).i);
+    while (k < ops.length && ops[k].op === 'add') adds.push((ops[k++] as { j: number }).j);
+
+    if (!advanced) {
+      dels.forEach(emitDel);
+      adds.forEach(emitAdd);
+      continue;
+    }
+
+    const paired = Math.min(dels.length, adds.length);
+    let p = 0;
+    for (; p < paired; p++) {
+      const li = dels[p];
+      const rj = adds[p];
+      if (calculateSimilarity(leftNorm[li], rightNorm[rj]) >= MODIFIED_PAIR_THRESHOLD) {
+        emitMod(li, rj);
+      } else {
+        emitDel(li);
+        emitAdd(rj);
+      }
+    }
+    for (let q = p; q < dels.length; q++) emitDel(dels[q]);
+    for (let q = p; q < adds.length; q++) emitAdd(adds[q]);
   }
-  
-  // Trim trailing whitespace (almost always want this)
-  normalized = normalized.trimEnd();
-  
-  // Additional whitespace handling
-  if (config?.ignoreWhitespace) {
-    // Complete whitespace normalization
-    normalized = normalized.replace(/\s+/g, ' ').trim();
-  }
-  
-  // For YAML files, also normalize quote styles around values
-  if (config?.formatType === 'yaml') {
-    // Remove quotes around simple values that don't need them
-    normalized = normalized.replace(/:\s*["']([^"']*?)["']\s*$/g, ': $1');
-    // Normalize spacing around colons
-    normalized = normalized.replace(/\s*:\s*/g, ': ');
-  }
-  
-  return normalized;
+
+  return { left, right, additions, removals, hasDifferences: additions > 0 || removals > 0 };
 }
 
-export function computeDiff(leftText: string, rightText: string, options?: { advancedMode?: boolean; config?: ComparisonConfig }): DiffResult {
-  const config = options?.config || {};
-  
-  // Check if this is JSON content
-  const isJson = isJsonContent(leftText) && isJsonContent(rightText);
-  
-  // For JSON content, use structural diff with smart field detection
-  if (isJson) {
-    return computeSmartJsonDiff(leftText, rightText, config);
-  }
-  
-  // For YAML/config files, use structural diff
-  if (config?.formatType === 'yaml' || config?.formatType === 'config') {
-    return computeStructuralDiff(leftText, rightText, config);
-  }
-  
-  // Normalize texts for comparison
-  const leftNormalized = normalizeLine(leftText, config);
-  const rightNormalized = normalizeLine(rightText, config);
-  
-  // Early exit for identical content after normalization
-  if (leftNormalized === rightNormalized) {
-    const lines = leftText.split('\n');
-    const unchangedLines: DiffLine[] = lines.map((line, i) => ({
-      content: line,
-      type: 'unchanged',
-      lineNumber: i + 1
-    }));
-    return {
-      left: unchangedLines,
-      right: [...unchangedLines],
-      additions: 0,
-      removals: 0,
-      hasDifferences: false
-    };
-  }
-  
+function computeTextDiff(
+  leftText: string,
+  rightText: string,
+  config: ComparisonConfig,
+  advanced: boolean
+): DiffResult {
   const leftLines = leftText.split('\n');
   const rightLines = rightText.split('\n');
+  const leftNorm = leftLines.map((l) => normalizeLine(l, config));
+  const rightNorm = rightLines.map((l) => normalizeLine(l, config));
 
-  // Create normalized versions for comparison
-  const leftNormalizedLines = leftLines.map(line => normalizeLine(line, config));
-  const rightNormalizedLines = rightLines.map(line => normalizeLine(line, config));
-
-  // For very large texts, use simple line-by-line diff to avoid O(m*n) crash
-  if (leftLines.length > LCS_MAX_LINES || rightLines.length > LCS_MAX_LINES) {
-    return computeSimpleDiffWithNormalization(leftLines, rightLines, leftNormalizedLines, rightNormalizedLines);
+  // Identical after normalization — nothing to align.
+  if (leftNorm.length === rightNorm.length && leftNorm.every((l, i) => l === rightNorm[i])) {
+    return {
+      left: leftLines.map((content, i) => ({ content, type: 'unchanged' as const, lineNumber: i + 1 })),
+      right: rightLines.map((content, i) => ({ content, type: 'unchanged' as const, lineNumber: i + 1 })),
+      additions: 0,
+      removals: 0,
+      hasDifferences: false,
+    };
   }
 
-  // Use simple diff for very small texts - but check if lines are similar first
-  if (leftLines.length < 10 && rightLines.length < 10) {
-    // Check if we should use advanced diff even for small texts
-    let shouldUseAdvanced = false;
-    for (let i = 0; i < Math.min(leftLines.length, rightLines.length); i++) {
-      // Compare normalized versions
-      if (leftNormalizedLines[i] !== rightNormalizedLines[i] && 
-          calculateSimilarity(leftNormalizedLines[i], rightNormalizedLines[i]) > 0.2) {
-        shouldUseAdvanced = true;
-        break;
+  // The O(m*n) table is the only superlinear step. The aligner trims the
+  // common prefix and suffix first, so the budget only applies to what
+  // differs; past it the middle is zipped positionally and the result is
+  // marked so the UI can say the alignment is approximate instead of
+  // presenting a wall of red and green as fact.
+  const alignment = alignSequences(leftNorm, rightNorm, MAX_LCS_CELLS);
+  const result = rowsFromOps(alignment.ops, leftLines, rightLines, leftNorm, rightNorm, advanced);
+  return alignment.degraded ? { ...result, degraded: true } : result;
+}
+
+// ── entry point ────────────────────────────────────────────────────────────
+
+/** How many distinct lossy literals to name before truncating the warning. */
+const MAX_REPORTED_LOSSY_NUMBERS = 5;
+
+/**
+ * Find number literals that `JSON.parse` cannot represent exactly.
+ *
+ * JSON numbers become IEEE-754 doubles, so a 19-digit Snowflake ID, a Java
+ * `long` primary key or a `bigint` balance is silently rounded — two distinct
+ * IDs can then compare equal, and the rendered pane shows a number the server
+ * never sent. That is a silent wrong answer on exactly the data this tool
+ * exists to compare, so it is surfaced rather than fixed by guesswork.
+ *
+ * String contents are blanked first so digits inside string values are not
+ * mistaken for numeric literals.
+ */
+export function detectNumericPrecisionLoss(jsonText: string): string[] {
+  const scrubbed = jsonText.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+  const literals = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+
+  const found: string[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+
+  while ((m = literals.exec(scrubbed)) !== null) {
+    const token = m[0];
+    if (seen.has(token)) continue;
+
+    const parsed = Number(token);
+    let lossy = false;
+
+    if (!Number.isFinite(parsed)) {
+      lossy = true; // 1e400 -> Infinity, which JSON.stringify then renders null
+    } else if (!/[.eE]/.test(token)) {
+      // Integer literal: compare exactly, via BigInt, against what we read.
+      try {
+        lossy = BigInt(token) !== BigInt(parsed);
+      } catch {
+        lossy = false;
       }
     }
-    
-    if (!shouldUseAdvanced) {
-      // Use normalized lines for simple diff comparison
-      return computeSimpleDiffWithNormalization(leftLines, rightLines, leftNormalizedLines, rightNormalizedLines);
-    }
-  }
 
-  // Use normalized lines for LCS computation
-  const dp = lcs(leftNormalizedLines, rightNormalizedLines);
-  
-  const left: DiffLine[] = [];
-  const right: DiffLine[] = [];
-  
-  let i = leftLines.length;
-  let j = rightLines.length;
-  
-  const tempLeft: DiffLine[] = [];
-  const tempRight: DiffLine[] = [];
-
-  // Track paired modified lines for word-level diff
-  const modifiedPairs: { leftIdx: number; rightIdx: number }[] = [];
-
-  // Backtrack through LCS to build diff
-  while (i > 0 || j > 0) {
-    // Compare normalized versions but display original
-    if (i > 0 && j > 0 && leftNormalizedLines[i - 1] === rightNormalizedLines[j - 1]) {
-      // Lines match exactly after normalization
-      tempLeft.unshift({
-        content: leftLines[i - 1],
-        type: 'unchanged',
-        lineNumber: i,
-      });
-      tempRight.unshift({
-        content: rightLines[j - 1],
-        type: 'unchanged',
-        lineNumber: j,
-      });
-      i--;
-      j--;
-    } else if (i > 0 && j > 0) {
-      // Check if lines are similar enough to pair for inline diff
-      const leftLine = leftLines[i - 1];
-      const rightLine = rightLines[j - 1];
-      const leftNormalized = leftNormalizedLines[i - 1];
-      const rightNormalized = rightNormalizedLines[j - 1];
-      
-      // Skip similarity calculation for very long lines or when advanced mode is disabled
-      let similarity = 0;
-      const useAdvanced = options?.advancedMode !== false;
-      
-      // Use normalized lines for similarity calculation
-      if (useAdvanced && leftNormalized.length < 1000 && rightNormalized.length < 1000) {
-        similarity = calculateSimilarity(leftNormalized, rightNormalized);
-      }
-      
-      // Lower threshold to 20% to catch more similar lines
-      // Also check for common patterns like JSON property changes
-      const hasCommonStructure = (leftLine.includes(':') && rightLine.includes(':')) ||
-                                 (leftLine.includes('=') && rightLine.includes('=')) ||
-                                 (leftLine.trim().startsWith('{') && rightLine.trim().startsWith('{')) ||
-                                 (leftLine.trim().startsWith('[') && rightLine.trim().startsWith('['));
-      
-      // If lines are at least 20% similar, have common structure, or if we're at a point where both need to be consumed,
-      // pair them for inline diff
-      if (similarity > 0.2 || hasCommonStructure || dp[i - 1][j] === dp[i][j - 1]) {
-        let leftSegments: DiffSegment[] | undefined;
-        let rightSegments: DiffSegment[] | undefined;
-        
-        if (useAdvanced) {
-          // Use normalized lines for word diff to avoid false positives
-          const result = computeWordDiff(leftNormalized, rightNormalized);
-          leftSegments = result.leftSegments;
-          rightSegments = result.rightSegments;
-        }
-        
-        // Only mark as modified if there are actual differences in segments
-        const hasChanges = useAdvanced && leftSegments && rightSegments && 
-                          (leftSegments.some(s => s.type !== 'unchanged') || 
-                          rightSegments.some(s => s.type !== 'unchanged'));
-        
-        if (hasChanges) {
-          tempLeft.unshift({
-            content: leftLines[i - 1],
-            type: 'modified',
-            lineNumber: i,
-            segments: leftSegments,
-          });
-          tempRight.unshift({
-            content: rightLines[j - 1],
-            type: 'modified',
-            lineNumber: j,
-            segments: rightSegments,
-          });
-          i--;
-          j--;
-        } else if (!useAdvanced && leftLines[i - 1] !== rightLines[j - 1]) {
-          // Without advanced mode, treat different lines as removed/added
-          if (dp[i][j - 1] >= dp[i - 1][j]) {
-            tempLeft.unshift({
-              content: '',
-              type: 'empty',
-              lineNumber: null,
-            });
-            tempRight.unshift({
-              content: rightLines[j - 1],
-              type: 'added',
-              lineNumber: j,
-            });
-            j--;
-          } else {
-            tempLeft.unshift({
-              content: leftLines[i - 1],
-              type: 'removed',
-              lineNumber: i,
-            });
-            tempRight.unshift({
-              content: '',
-              type: 'empty',
-              lineNumber: null,
-            });
-            i--;
-          }
-        } else {
-          // Lines are identical after normalization
-          tempLeft.unshift({
-            content: leftLines[i - 1],
-            type: 'unchanged',
-            lineNumber: i,
-          });
-          tempRight.unshift({
-            content: rightLines[j - 1],
-            type: 'unchanged',
-            lineNumber: j,
-          });
-          i--;
-          j--;
-        }
-      } else if (dp[i][j - 1] >= dp[i - 1][j]) {
-        // Line added on right
-        tempLeft.unshift({
-          content: '',
-          type: 'empty',
-          lineNumber: null,
-        });
-        tempRight.unshift({
-          content: rightLines[j - 1],
-          type: 'added',
-          lineNumber: j,
-        });
-        j--;
-      } else {
-        // Line removed from left
-        tempLeft.unshift({
-          content: leftLines[i - 1],
-          type: 'removed',
-          lineNumber: i,
-        });
-        tempRight.unshift({
-          content: '',
-          type: 'empty',
-          lineNumber: null,
-        });
-        i--;
-      }
-    } else if (j > 0) {
-      // Line added on right
-      tempLeft.unshift({
-        content: '',
-        type: 'empty',
-        lineNumber: null,
-      });
-      tempRight.unshift({
-        content: rightLines[j - 1],
-        type: 'added',
-        lineNumber: j,
-      });
-      j--;
-    } else if (i > 0) {
-      // Line removed from left
-      tempLeft.unshift({
-        content: leftLines[i - 1],
-        type: 'removed',
-        lineNumber: i,
-      });
-      tempRight.unshift({
-        content: '',
-        type: 'empty',
-        lineNumber: null,
-      });
-      i--;
+    if (lossy) {
+      seen.add(token);
+      found.push(token);
+      if (found.length >= MAX_REPORTED_LOSSY_NUMBERS) break;
     }
   }
+  return found;
+}
 
-  left.push(...tempLeft);
-  right.push(...tempRight);
+/**
+ * Build user-facing precision warnings for two raw JSON texts.
+ *
+ * Must be given the *raw* response bodies. Anything that has already been
+ * through `formatJson` (or any JSON.parse/stringify round-trip) has already
+ * lost the precision, so scanning it finds nothing — the rounded literal round-
+ * trips cleanly by definition.
+ */
+export function precisionWarnings(leftText: string, rightText: string): string[] {
+  const tokens = Array.from(
+    new Set([...detectNumericPrecisionLoss(leftText), ...detectNumericPrecisionLoss(rightText)])
+  ).slice(0, MAX_REPORTED_LOSSY_NUMBERS);
 
-  const additions = right.filter(l => l.type === 'added' || l.type === 'modified').length;
-  const removals = left.filter(l => l.type === 'removed' || l.type === 'modified').length;
+  if (tokens.length === 0) return [];
 
-  return {
-    left,
-    right,
-    additions,
-    removals,
-    hasDifferences: additions > 0 || removals > 0,
-  };
+  const rendered = tokens.map((t) => `${t} → ${Number(t)}`).join(', ');
+  return [
+    `Some numbers exceed the precision JavaScript can represent and were rounded when read: ${rendered}. ` +
+      `Values this large (Snowflake IDs, bigint keys) may compare as identical even when they differ.`,
+  ];
+}
+
+/**
+ * Warn when two rows differ *only* by characters nobody can see.
+ *
+ * Without this the panes show two visually identical lines marked as changed,
+ * which reads as a bug in the tool rather than a finding about the data.
+ */
+function invisibleOnlyWarnings(result: DiffResult): string[] {
+  const rows = Math.min(result.left.length, result.right.length);
+  for (let i = 0; i < rows; i++) {
+    const left = result.left[i];
+    const right = result.right[i];
+    if (!left || !right || left.type === 'empty' || right.type === 'empty') continue;
+
+    const a = left.content ?? '';
+    const b = right.content ?? '';
+    if (a !== b && stripInvisible(a) === stripInvisible(b)) {
+      return [
+        'Some lines differ only by invisible characters (zero-width spaces, non-breaking ' +
+          'spaces, a BOM or control codes). They will look identical on screen. Turn on ' +
+          '"Ignore invisible characters" to treat them as equal.',
+      ];
+    }
+  }
+  return [];
+}
+
+function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+export function computeDiff(
+  leftText: string,
+  rightText: string,
+  options?: ComputeDiffOptions
+): DiffResult {
+  const config = options?.config || {};
+  const advanced = options?.advancedMode !== false;
+
+  // JSON on both sides → compare the parsed values, not their rendering.
+  const leftJson = tryParseJson(leftText);
+  const rightJson = tryParseJson(rightText);
+  if (leftJson.ok && rightJson.ok) {
+    const result = computeJsonTreeDiff(leftJson.value, rightJson.value, {
+      rules: options?.rules,
+      legacyAutoIgnore: options?.legacyAutoIgnore,
+      sortKeys: options?.sortKeys,
+      inlineSegments: advanced,
+      semanticComparison: options?.semanticComparison,
+      ignoreCase: options?.ignoreCase,
+      ignoreWhitespace: options?.ignoreWhitespace,
+    });
+    const warnings = [...precisionWarnings(leftText, rightText), ...invisibleOnlyWarnings(result)];
+    return warnings.length > 0 ? { ...result, warnings } : result;
+  }
+
+  // YAML and config files go through the same LCS path as plain text.
+  //
+  // `computeStructuralDiff` was written to stop a missing field from marking
+  // every following line as changed — but that cascade is exactly what an LCS
+  // alignment prevents, and doing it properly also avoids that matcher's
+  // positional heuristics (which could drop added lines from the rendered
+  // pane). `normalizeLine` already applies the YAML-specific quote and colon
+  // normalization when `formatType` says so.
+  const textResult = computeTextDiff(leftText, rightText, config, advanced);
+  const textWarnings = invisibleOnlyWarnings(textResult);
+  return textWarnings.length > 0 ? { ...textResult, warnings: textWarnings } : textResult;
 }
 
 export function formatJson(text: string): string {
   try {
-    const parsed = JSON.parse(text);
-    return JSON.stringify(parsed, null, 2);
+    return JSON.stringify(JSON.parse(text), null, 2);
   } catch {
     return text;
   }
-}
-
-// Clear similarity cache when needed (e.g., between different comparisons)
-export function clearSimilarityCache(): void {
-  similarityCache.clear();
 }
 
 export function formatHeaders(headers: Record<string, string>): string {
@@ -681,63 +411,115 @@ export function formatHeaders(headers: Record<string, string>): string {
     .join('\n');
 }
 
-// Check if content is JSON
-function isJsonContent(text: string): boolean {
-  try {
-    JSON.parse(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
+// ───────────────────────────────────────────────────────────────────────────
+// Legacy marker injection.
+//
+// DEPRECATED: the diff pipeline no longer calls this. `computeJsonTreeDiff`
+// emits `/* NOISE:<type>:<source> */` markers directly while walking the
+// parsed tree, which is both cheaper and correct for nested paths. This is
+// kept because it is a pure function with its own test coverage and is safe
+// to call; it can be removed once nothing references it.
+// ───────────────────────────────────────────────────────────────────────────
 
-// Smart JSON diff that understands field types
-function computeSmartJsonDiff(leftText: string, rightText: string, config?: ComparisonConfig): DiffResult {
-  try {
-    const leftJson = JSON.parse(leftText);
-    const rightJson = JSON.parse(rightText);
-    
-    // Format both JSONs
-    const leftFormatted = JSON.stringify(leftJson, null, 2);
-    const rightFormatted = JSON.stringify(rightJson, null, 2);
-    
-    // Preprocess to mark timestamp/ID fields
-    const leftProcessed = preprocessJsonForComparison(leftFormatted);
-    const rightProcessed = preprocessJsonForComparison(rightFormatted);
-    
-    // Use structural diff for better alignment
-    return computeStructuralDiff(leftProcessed, rightProcessed, config);
-  } catch {
-    // Fall back to text diff if JSON parsing fails
-    return computeStructuralDiff(leftText, rightText, config);
-  }
-}
-
-// Preprocess JSON to normalize timestamps and IDs
-function preprocessJsonForComparison(jsonText: string): string {
+export function preprocessJsonForComparison(jsonText: string, rules?: NoiseRule[]): string {
   const lines = jsonText.split('\n');
-  return lines.map(line => {
-    // Check if line contains a field that looks like timestamp or ID
-    const fieldMatch = line.match(/^(\s*)"([^"]+)"\s*:\s*(.+)/);
+  const safeRules = rules && rules.length ? rules : null;
+
+  type Frame = { key: string | null; isArray: boolean; arrayIndex: number };
+  const stack: Frame[] = [];
+
+  function pathFor(currentKey: string | null): string {
+    let p = '$';
+    for (let idx = 0; idx < stack.length; idx++) {
+      const frame = stack[idx];
+      if (frame.key !== null) p += `.${frame.key}`;
+      if (frame.isArray) p += `[${Math.max(0, frame.arrayIndex - 1)}]`;
+    }
+    if (currentKey !== null) p += `.${currentKey}`;
+    return p;
+  }
+
+  const out: string[] = new Array(lines.length);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    const fieldMatch = line.match(/^(\s*)"([^"]+)"\s*:\s*(.+)$/);
+    const arrayElementOpen = !fieldMatch && /^\s*[{[]\s*$/.test(line);
+    const closeMatch = line.match(/^(\s*)([}\]])\s*,?\s*$/);
+    const arrayElementScalar =
+      !fieldMatch && !arrayElementOpen && !closeMatch && /^\s*[^\s].*$/.test(line.trim()) && line.trim() !== '';
+
+    let processed = line;
+
     if (fieldMatch) {
-      const [, indent, key, value] = fieldMatch;
-      const fieldType = detectFieldType(key, value);
-      
-      if (fieldType === 'timestamp') {
-        // Check if values are actually different timestamps
-        const timestampPattern = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}|\d{10,13}/;
-        if (timestampPattern.test(value)) {
-          // Mark timestamp fields to be treated specially
-          return `${indent}"${key}": ${value} /* TIMESTAMP */`;
+      const [, indent, key, valueRaw] = fieldMatch;
+      const value = valueRaw.replace(/,\s*$/, '').trim();
+
+      const isContainerOpen = value === '{' || value === '[';
+      if (!isContainerOpen) {
+        const fieldType = detectFieldType(key, value);
+        let appended = '';
+
+        if (fieldType === 'timestamp') {
+          if (/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}|\d{10,13}/.test(value)) appended += ' /* TIMESTAMP */';
+        } else if (fieldType === 'id') {
+          if (/"[0-9a-f-]+"|"(usr_|sess_|prod_|req_)[^"]+"/.test(value)) appended += ' /* ID */';
         }
-      } else if (fieldType === 'id') {
-        // Mark ID fields
-        const idPattern = /"[0-9a-f-]+"|"(usr_|sess_|prod_|req_)[^"]+"/;
-        if (idPattern.test(value)) {
-          return `${indent}"${key}": ${value} /* ID */`;
+
+        const valueForClassifier = stripQuotes(value);
+        if (fieldType !== 'normal' && valueForClassifier !== null) {
+          for (const c of CLASSIFIERS) {
+            if (c.match(valueForClassifier)) {
+              appended += ` /* NOISE:${c.name}:auto */`;
+              break;
+            }
+          }
+        }
+
+        if (safeRules) {
+          const currentPath = pathFor(key);
+          for (const rule of safeRules) {
+            if (ruleMatchesPath(rule, currentPath)) {
+              appended += ` /* NOISE:${rule.type}:rule */`;
+              break;
+            }
+          }
+        }
+
+        if (appended) {
+          const hadComma = /,\s*$/.test(valueRaw);
+          processed = `${indent}"${key}": ${value}${hadComma ? ',' : ''}${appended}`;
         }
       }
     }
-    return line;
-  }).join('\n');
+
+    out[i] = processed;
+
+    if (fieldMatch) {
+      const [, , key, valueRaw] = fieldMatch;
+      const value = valueRaw.trim();
+      if (value.startsWith('{')) stack.push({ key, isArray: false, arrayIndex: 0 });
+      else if (value.startsWith('[')) stack.push({ key, isArray: true, arrayIndex: 0 });
+    } else if (arrayElementOpen) {
+      const parent = stack[stack.length - 1];
+      if (parent && parent.isArray) parent.arrayIndex += 1;
+      const trimmed = line.trim();
+      if (trimmed.startsWith('{')) stack.push({ key: null, isArray: false, arrayIndex: 0 });
+      else if (trimmed.startsWith('[')) stack.push({ key: null, isArray: true, arrayIndex: 0 });
+    } else if (arrayElementScalar) {
+      const parent = stack[stack.length - 1];
+      if (parent && parent.isArray) parent.arrayIndex += 1;
+    } else if (closeMatch) {
+      stack.pop();
+    }
+  }
+
+  return out.join('\n');
+}
+
+function stripQuotes(value: string): string | null {
+  const v = value.trim().replace(/,\s*$/, '');
+  if (v.startsWith('"') && v.endsWith('"') && v.length >= 2) return v.slice(1, -1);
+  return v;
 }

@@ -26,6 +26,33 @@ DiffChecker is a powerful offline comparison tool that helps developers compare 
 - **Export Results**: Save comparison results as JSON files for documentation
 - **Dark/Light Mode**: Toggle between themes for comfortable viewing
 
+## Comparing production APIs (CORS)
+
+A browser will not let a page read a cross-origin response unless the API sends
+`Access-Control-Allow-Origin` naming your origin. Production APIs won't do that for a
+diffing tool, and you usually can't change their config — so a direct request from the
+page fails, and no amount of client-side code can override it.
+
+Run the local proxy instead:
+
+```bash
+npx @shubhankar-mohan/diffchecker-proxy
+```
+
+Then turn on **Use local proxy** in the app. Requests are forwarded from your own
+machine, so CORS doesn't apply:
+
+```
+your browser  ──▶  127.0.0.1 (proxy)  ──▶  the API
+```
+
+Your data still never reaches a third party — the proxy binds to loopback only and
+stops existing when you close the terminal. It also restores headers the browser
+forbids scripts from setting, notably `Cookie`, so session-authenticated cURL commands
+work again.
+
+See [`proxy/README.md`](proxy/README.md) for options and security notes.
+
 ## Use Cases
 
 - **API Development**: Compare responses between production and development environments
@@ -33,6 +60,12 @@ DiffChecker is a powerful offline comparison tool that helps developers compare 
 - **Text Comparison**: Compare configuration files, code snippets, or any text content
 - **Testing**: Verify API consistency across different environments
 - **Migration Validation**: Ensure API compatibility when migrating services
+
+## License
+
+MIT — see [LICENSE](LICENSE). The local proxy in [`proxy/`](proxy/) is published
+separately as [`@shubhankar-mohan/diffchecker-proxy`](https://www.npmjs.com/package/@shubhankar-mohan/diffchecker-proxy)
+under the same licence.
 
 ## Project Info
 

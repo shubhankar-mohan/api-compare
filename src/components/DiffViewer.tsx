@@ -1,23 +1,32 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Copy, Minus, Plus, Globe, Server, Code2, Rows3, FoldVertical, GitBranch, TrendingUp, GitMerge } from 'lucide-react';
+import { Copy, Minus, Plus, Globe, Server, Code2, Rows3, FoldVertical, GitBranch, TrendingUp, GitMerge, Sparkles, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { ApiResponse } from '@/lib/requestExecutor';
-import { computeDiff, formatJson, formatHeaders, DiffLine, DiffSegment } from '@/lib/diffAlgorithm';
-import { 
-  computeEnhancedDiff, 
-  DiffOptions, 
+import { computeDiff, formatJson, formatHeaders, precisionWarnings, DiffLine, DiffSegment } from '@/lib/diffAlgorithm';
+import {
+  computeEnhancedDiff,
+  DiffOptions,
   EnhancedDiffResult,
   searchInDiff,
   navigateToPath
 } from '@/lib/enhancedDiffAlgorithm';
+import {
+  loadRules,
+  saveRules,
+  addRule,
+  canonicalizeEndpoint,
+  type NoiseRule,
+  type NoiseClassifier,
+} from '@/lib/noiseRules';
 import { cn } from '@/lib/utils';
 import { JsonSyntaxHighlight } from './JsonSyntaxHighlight';
 import { FoldableJson } from './FoldableJson';
 import { DiffOptionsPanel, DiffSearchBar } from './DiffOptions';
+import { RulesViewer } from './RulesViewer';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { MergeView } from './MergeView';
@@ -32,6 +41,30 @@ import {
 interface DiffViewerProps {
   original: ApiResponse;
   localhost: ApiResponse;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Noise metadata
+//
+// `DiffLine.noise` and `DiffLine.fieldKey` are set by the diff engine and read
+// directly. They used to be encoded as `/* NOISE:<type>:<source> */` text
+// appended to `content` and re-parsed here — which meant a response containing
+// that literal string could forge one: this renderer would strip the "marker"
+// out of the user's own data and show a real difference as suppressed noise.
+// Line content is now rendered verbatim, exactly as the server sent it.
+
+/**
+ * Truncate a long endpoint for toast display (per CEO plan v3 N3).
+ * `host.com:8080/v1/users/123/orders` → `host.com/…/orders`.
+ */
+function truncateEndpoint(endpoint: string): string {
+  if (!endpoint) return '';
+  if (endpoint.length <= 40) return endpoint;
+  const slashIdx = endpoint.indexOf('/');
+  if (slashIdx === -1) return endpoint.slice(0, 40);
+  const host = endpoint.slice(0, Math.min(slashIdx, 20));
+  const lastSeg = endpoint.split('/').filter(Boolean).pop() || '';
+  return `${host}/…/${lastSeg}`;
 }
 
 function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'left' | 'right' }) {
@@ -67,19 +100,40 @@ function InlineSegments({ segments, side }: { segments: DiffSegment[]; side: 'le
   );
 }
 
-function DiffLineComponent({ 
-  line, 
-  side, 
+function DiffLineComponent({
+  line,
+  side,
   isJson,
   isHighlighted = false,
-  lineIndex
-}: { 
-  line: DiffLine; 
-  side: 'left' | 'right'; 
+  lineIndex,
+  onTeach,
+  isShowAnyway,
+  onToggleShowAnyway,
+  isFocused,
+  onFocus,
+}: {
+  line: DiffLine;
+  side: 'left' | 'right';
   isJson?: boolean;
   isHighlighted?: boolean;
   lineIndex?: number;
+  /** Called when the user clicks a "Teach" chip on this line. Receives the
+   *  classifier type detected on the field. No-op when undefined. */
+  onTeach?: (markerType: NoiseClassifier, fieldKey: string | null) => void;
+  /** When true, a `rule` marker on this line is being one-shot revealed. */
+  isShowAnyway?: boolean;
+  onToggleShowAnyway?: () => void;
+  /** True when this line currently has keyboard focus (drives `i` shortcut). */
+  isFocused?: boolean;
+  onFocus?: () => void;
 }) {
+  const autoMarker = line.noise?.source === 'auto' ? line.noise : undefined;
+  const ruleMarker = line.noise?.source === 'rule' ? line.noise : undefined;
+  const legacyMarker = line.noise?.source === 'legacy' ? line.noise : undefined;
+  // Greyed when suppression actually applied — by a saved rule, or by the
+  // opt-in legacy heuristic — and the user hasn't toggled show-anyway.
+  const noiseApplied = !!(ruleMarker || legacyMarker) && !isShowAnyway;
+
   const bgClass = {
     added: 'bg-[hsl(var(--diff-added-bg))]',
     removed: 'bg-[hsl(var(--diff-removed-bg))]',
@@ -97,13 +151,19 @@ function DiffLineComponent({
   }[line.type];
 
   return (
-    <div 
+    <div
       className={cn(
-        'flex font-mono text-sm transition-all',
+        'flex font-mono text-sm transition-all group',
         bgClass,
-        isHighlighted && 'ring-2 ring-accent ring-offset-1 bg-accent/10'
+        noiseApplied && 'opacity-50',
+        isHighlighted && 'ring-2 ring-accent ring-offset-1 bg-accent/10',
+        isFocused && 'outline outline-2 outline-primary/40 -outline-offset-2'
       )}
       id={`diff-line-${side}-${lineIndex}`}
+      tabIndex={onFocus ? 0 : undefined}
+      onFocus={onFocus}
+      data-focused={isFocused ? 'true' : undefined}
+      data-noise-applied={noiseApplied ? 'true' : undefined}
     >
       <div className="w-12 flex-shrink-0 px-2 py-0.5 text-right text-[hsl(var(--diff-line-number))] bg-[hsl(var(--diff-line-number-bg))] select-none border-r border-border">
         {line.lineNumber ?? ''}
@@ -118,23 +178,60 @@ function DiffLineComponent({
       </div>
       <pre className={cn('flex-1 px-2 py-0.5 overflow-x-auto whitespace-pre', textClass)}>
         {line.type === 'modified' && line.segments ? (
-          <InlineSegments segments={line.segments} side={side} />
+          <InlineSegments
+            segments={line.segments}
+            side={side}
+          />
         ) : isJson && line.type === 'unchanged' ? (
           <JsonSyntaxHighlight content={line.content || ' '} />
         ) : (
           line.content || ' '
+        )}
+        {/* Auto chip — only render on the right side to avoid duplication */}
+        {autoMarker && side === 'right' && onTeach && (
+          <Badge
+            variant="outline"
+            className="ml-2 cursor-pointer gap-1 px-2 py-0 text-[10px] font-normal border-primary/40 text-primary hover:bg-primary/10 align-middle"
+            onClick={() => onTeach(autoMarker.type as NoiseClassifier, line.fieldKey ?? null)}
+            title={`Teach DiffChecker that ${autoMarker.type} fields are noise on this endpoint`}
+          >
+            <Sparkles className="h-2.5 w-2.5" aria-hidden="true" />
+            Teach: {autoMarker.type} is noise here
+          </Badge>
+        )}
+        {/* Rule applied → "Show anyway" inline button */}
+        {ruleMarker && side === 'right' && onToggleShowAnyway && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-2 h-5 px-2 py-0 text-[10px] font-normal text-muted-foreground hover:text-foreground"
+            onClick={onToggleShowAnyway}
+            title="Reveal this field for this diff only — does not delete the rule"
+          >
+            {isShowAnyway ? (
+              <>
+                <EyeOff className="h-2.5 w-2.5 mr-1" aria-hidden="true" />
+                Hide again
+              </>
+            ) : (
+              <>
+                <Eye className="h-2.5 w-2.5 mr-1" aria-hidden="true" />
+                Show once (don't forget the rule)
+              </>
+            )}
+          </Button>
         )}
       </pre>
     </div>
   );
 }
 
-function DiffPanel({ 
-  title, 
-  lines, 
-  lineCount, 
-  additions, 
-  removals, 
+function DiffPanel({
+  title,
+  lines,
+  lineCount,
+  additions,
+  removals,
   side,
   content,
   icon: Icon,
@@ -142,7 +239,12 @@ function DiffPanel({
   isJson = false,
   highlightedLine,
   showOnlyDifferences = false,
-}: { 
+  onTeach,
+  showAnywaySet,
+  onToggleShowAnyway,
+  focusedLine,
+  onFocusLine,
+}: {
   title: string;
   lines: DiffLine[];
   lineCount: number;
@@ -155,6 +257,11 @@ function DiffPanel({
   isJson?: boolean;
   highlightedLine?: { line: number; side: 'left' | 'right' } | null;
   showOnlyDifferences?: boolean;
+  onTeach?: (markerType: NoiseClassifier, fieldKey: string | null) => void;
+  showAnywaySet?: Set<number>;
+  onToggleShowAnyway?: (lineIndex: number) => void;
+  focusedLine?: { line: number; side: 'left' | 'right' } | null;
+  onFocusLine?: (lineIndex: number) => void;
 }) {
   // Filter lines if showing only differences
   const displayLines = showOnlyDifferences 
@@ -211,6 +318,7 @@ function DiffPanel({
         {displayLines.map((line, idx) => {
           const originalIndex = lines.indexOf(line);
           const isHighlighted = highlightedLine?.side === side && highlightedLine?.line === originalIndex;
+          const isFocused = focusedLine?.side === side && focusedLine?.line === originalIndex;
 
           return (
             <DiffLineComponent
@@ -220,6 +328,11 @@ function DiffPanel({
               isJson={isJson}
               isHighlighted={isHighlighted}
               lineIndex={originalIndex}
+              onTeach={onTeach}
+              isShowAnyway={showAnywaySet?.has(originalIndex)}
+              onToggleShowAnyway={onToggleShowAnyway ? () => onToggleShowAnyway(originalIndex) : undefined}
+              isFocused={isFocused}
+              onFocus={onFocusLine ? () => onFocusLine(originalIndex) : undefined}
             />
           );
         })}
@@ -236,33 +349,163 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
   const [pathInput, setPathInput] = useState('');
   const [highlightedLine, setHighlightedLine] = useState<{ line: number; side: 'left' | 'right' } | null>(null);
   const [showMergeDialog, setShowMergeDialog] = useState(false);
-  
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Noise-aware state
+  //
+  // - `endpointKey` is the canonicalized URL we use as the rule storage key
+  // - `endpointRules` is the live rule set; reloaded on mount + on changes
+  // - `rulesVersion` is bumped to re-trigger the diff after a rule add/remove
+  // - `showAnywaySet` holds line indices that have been one-shot revealed
+  //   (right side; we mirror to left because the indices align after diff)
+  // - `focusedLine` tracks which row currently has keyboard focus for
+  //   the `i` shortcut (Step 7).
+  const endpointKey = useMemo(
+    () => canonicalizeEndpoint(original.url || ''),
+    [original.url]
+  );
+  const [endpointRules, setEndpointRules] = useState<NoiseRule[]>([]);
+  const [rulesVersion, setRulesVersion] = useState(0);
+  const [showAnywaySet, setShowAnywaySet] = useState<Set<number>>(new Set());
+  const [focusedLine, setFocusedLine] = useState<{ line: number; side: 'left' | 'right' } | null>(null);
+
+  // Load rules whenever the endpoint changes
+  useEffect(() => {
+    if (endpointKey) {
+      setEndpointRules(loadRules(endpointKey));
+    } else {
+      setEndpointRules([]);
+    }
+    // Compare clears the per-diff override (rules persist; overrides don't)
+    setShowAnywaySet(new Set());
+  }, [endpointKey, original.body, localhost.body]);
+
   // Calculate content size for advanced mode auto-detection
   const contentSize = useMemo(() => {
     const leftLines = original.body.split('\n').length;
     const rightLines = localhost.body.split('\n').length;
     return Math.max(leftLines, rightLines);
   }, [original.body, localhost.body]);
-  
+
   // Use enhanced diff when options are set, otherwise fall back to basic diff
   const bodyDiff = useMemo(() => {
     const leftFormatted = formatJson(original.body);
     const rightFormatted = formatJson(localhost.body);
-    
+
     // Check if any options are enabled
-    const hasOptions = diffOptions.semanticComparison || 
-                      diffOptions.ignoreCase || 
+    const hasOptions = diffOptions.semanticComparison ||
+                      diffOptions.ignoreCase ||
                       diffOptions.ignoreWhitespace ||
                       diffOptions.detectArrayMoves ||
                       (diffOptions.ignoreKeys && diffOptions.ignoreKeys.length > 0) ||
                       (diffOptions.ignorePaths && diffOptions.ignorePaths.length > 0);
-    
+
+    // Precision warnings are derived from the RAW bodies. `formatJson` above
+    // already round-trips through JSON.parse, which is exactly where an
+    // oversized integer is rounded — by then there is nothing left to detect.
+    const warnings = precisionWarnings(original.body, localhost.body);
+    // Replace rather than append. The engine also scans the text it was handed,
+    // but that text has already been through formatJson, so its warning names
+    // the *rounded* literal ("...800 -> ...800") which reads as nonsense. The
+    // raw scan knows the original values, so it wins.
+    const withWarnings = <T extends { warnings?: string[] }>(result: T): T =>
+      warnings.length > 0 ? { ...result, warnings } : result;
+
     if (hasOptions || diffOptions.advancedMode !== false) {
-      return computeEnhancedDiff(leftFormatted, rightFormatted, diffOptions) as EnhancedDiffResult;
+      return withWarnings(
+        computeEnhancedDiff(leftFormatted, rightFormatted, diffOptions, endpointRules) as EnhancedDiffResult
+      );
     } else {
-      return computeDiff(leftFormatted, rightFormatted, { advancedMode: diffOptions.advancedMode });
+      return withWarnings(
+        computeDiff(leftFormatted, rightFormatted, { advancedMode: diffOptions.advancedMode, rules: endpointRules })
+      );
     }
-  }, [original.body, localhost.body, diffOptions]);
+    // rulesVersion forces a recompute even when endpointRules reference hasn't changed
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [original.body, localhost.body, diffOptions, endpointRules, rulesVersion]);
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Noise actions: teach (add rule) and toggle "show anyway"
+  const handleTeach = useCallback(
+    (markerType: NoiseClassifier, fieldKey: string | null) => {
+      if (!endpointKey) {
+        toast({
+          title: 'Cannot save rule',
+          description: 'No endpoint URL detected for this diff.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      // Build the rule path: prefer a wildcard descendant match so the rule
+      // applies regardless of nesting depth (a UUID under `$.data.user.id`
+      // and one under `$.id` should both be ignored after one click).
+      //
+      // Rows without a field key are array elements. The old fallback here was
+      // `$..*`, which matches every path — it silently failed to compile, so
+      // the rule listed as "taught" and never matched anything. There is no
+      // sensible rule to write for such a row, so say so instead.
+      if (!fieldKey) {
+        toast({
+          title: 'Nothing to teach here',
+          description: 'This row is an array element, not a named field. Teach on a field instead.',
+        });
+        return;
+      }
+      const path = `$..${fieldKey}`;
+      const rule: NoiseRule = {
+        path,
+        type: markerType,
+        source: 'manual',
+        createdAt: Date.now(),
+      };
+      const result = addRule(endpointKey, rule);
+      if (!result.ok) {
+        toast({
+          title: 'Could not save rule',
+          description: result.error,
+          variant: 'destructive',
+        });
+        return;
+      }
+      setEndpointRules(loadRules(endpointKey));
+      setRulesVersion((v) => v + 1);
+      toast({
+        title: 'DiffChecker learned',
+        description: `${markerType} fields are noise on ${truncateEndpoint(endpointKey)}.`,
+      });
+    },
+    [endpointKey]
+  );
+
+  const handleToggleShowAnyway = useCallback((lineIndex: number) => {
+    setShowAnywaySet((prev) => {
+      const next = new Set(prev);
+      if (next.has(lineIndex)) {
+        next.delete(lineIndex);
+      } else {
+        next.add(lineIndex);
+      }
+      return next;
+    });
+  }, []);
+
+  // Forget a rule by direct path (used by `i` toggle when a rule already exists)
+  const handleForgetByPath = useCallback(
+    (path: string) => {
+      if (!endpointKey) return;
+      const existing = loadRules(endpointKey);
+      const next = existing.filter((r) => r.path !== path);
+      const result = saveRules(endpointKey, next);
+      if (!result.ok) {
+        toast({ title: 'Could not forget rule', description: result.error, variant: 'destructive' });
+        return;
+      }
+      setEndpointRules(loadRules(endpointKey));
+      setRulesVersion((v) => v + 1);
+      toast({ title: 'Rule forgotten', description: `DiffChecker no longer ignores ${path}.` });
+    },
+    [endpointKey]
+  );
 
   const headersDiff = useMemo(() => {
     const leftHeaders = formatHeaders(original.headers);
@@ -313,11 +556,67 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
     }
   };
   
+  // ──────────────────────────────────────────────────────────────────────
+  // `i` shortcut — toggle ignore on the currently-focused diff row.
+  //
+  // Scope: only fires when (a) a diff row received focus (focusedLine is
+  // set), AND (b) the active element is one of our row divs (data-focused
+  // attribute) — not the cURL textarea or some other input. This is NOT a
+  // global shortcut. We use a single document-level listener gated by these
+  // conditions to keep the React tree clean.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'i' && e.key !== 'I') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!focusedLine) return;
+
+      // Don't hijack `i` when the user is typing into an input/textarea
+      const active = document.activeElement;
+      if (active) {
+        const tag = active.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (active as HTMLElement).isContentEditable) {
+          return;
+        }
+        // Only fire when the focused element is one of our diff rows
+        const id = (active as HTMLElement).id;
+        if (!id || !id.startsWith('diff-line-')) return;
+      } else {
+        return;
+      }
+
+      // Find the line on the focused side and read its parsed marker info
+      const lines = focusedLine.side === 'left' ? bodyDiff.left : bodyDiff.right;
+      const line = lines[focusedLine.line];
+      if (!line) return;
+      const fieldKey = line.fieldKey ?? null;
+      if (!fieldKey) return;
+
+      e.preventDefault();
+      // Build the same wildcard-descendant path we use for chip clicks
+      const path = `$..${fieldKey}`;
+      const existingRule = endpointRules.find((r) => r.path === path);
+      if (existingRule) {
+        handleForgetByPath(path);
+      } else {
+        // Pick a classifier name: prefer rule marker (already applied) →
+        // auto marker (suggestion) → fallback to a string from the field
+        // key (unknown classifier name; will round-trip but won't drive a
+        // classifier-based chip).
+        const markerType =
+          line.noise?.type ||
+          (fieldKey.toLowerCase().includes('id') ? 'uuid' : 'trace-id');
+        handleTeach(markerType, fieldKey);
+      }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [focusedLine, bodyDiff, endpointRules, handleTeach, handleForgetByPath]);
+
   // Keyboard navigation for search results
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (searchResults.length === 0) return;
-      
+
       if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         const nextIndex = (currentSearchIndex + 1) % searchResults.length;
@@ -421,6 +720,15 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                 structuralChangesCount={structuralChangesCount}
                 contentSize={contentSize}
               />
+              {/* Rules viewer — sibling of DiffOptions per CEO/design review */}
+              <RulesViewer
+                endpoint={original.url || ''}
+                rules={endpointRules}
+                onRulesChanged={() => {
+                  if (endpointKey) setEndpointRules(loadRules(endpointKey));
+                  setRulesVersion((v) => v + 1);
+                }}
+              />
               <DiffSearchBar onSearch={handleSearch} />
 
               {/* Path Navigation */}
@@ -494,12 +802,37 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
           </div>
           
           <TabsContent value="body" className="m-0 border-t mt-4">
+            {/* Correctness caveats the user must see. A precision warning in
+                particular can mean two visibly-different IDs compared equal,
+                so it cannot live only in the console. */}
+            {(bodyDiff.warnings?.length || bodyDiff.degraded) && (
+              <div className="mx-4 mt-4 space-y-2">
+                {bodyDiff.warnings?.map((warning) => (
+                  <div
+                    key={warning}
+                    className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs"
+                  >
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
+                    <span>{warning}</span>
+                  </div>
+                ))}
+                {bodyDiff.degraded && (
+                  <div className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" />
+                    <span>
+                      These responses are too large to align precisely, so lines were matched by
+                      position. Differences shown may be wider than the real change.
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
             {viewMode === 'diff' ? (
               <div className="grid grid-cols-2 divide-x">
                 <DiffPanel
                   title="Original Domain"
                   lines={bodyDiff.left}
-                  lineCount={original.body.split('\n').length}
+                  lineCount={bodyDiff.left.filter((l) => l.type !== 'empty').length}
                   removals={bodyDiff.removals}
                   side="left"
                   content={original.body}
@@ -508,11 +841,15 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                   isJson={true}
                   highlightedLine={highlightedLine}
                   showOnlyDifferences={diffOptions.showOnlyDifferences}
+                  showAnywaySet={showAnywaySet}
+                  onToggleShowAnyway={handleToggleShowAnyway}
+                  focusedLine={focusedLine}
+                  onFocusLine={(idx) => setFocusedLine({ line: idx, side: 'left' })}
                 />
                 <DiffPanel
                   title="Localhost"
                   lines={bodyDiff.right}
-                  lineCount={localhost.body.split('\n').length}
+                  lineCount={bodyDiff.right.filter((l) => l.type !== 'empty').length}
                   additions={bodyDiff.additions}
                   side="right"
                   content={localhost.body}
@@ -521,6 +858,11 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
                   isJson={true}
                   highlightedLine={highlightedLine}
                   showOnlyDifferences={diffOptions.showOnlyDifferences}
+                  onTeach={handleTeach}
+                  showAnywaySet={showAnywaySet}
+                  onToggleShowAnyway={handleToggleShowAnyway}
+                  focusedLine={focusedLine}
+                  onFocusLine={(idx) => setFocusedLine({ line: idx, side: 'right' })}
                 />
               </div>
             ) : (
