@@ -562,9 +562,15 @@ export function searchInDiff(
 ): { line: number; column: number; side: 'left' | 'right' }[] {
   const results: { line: number; column: number; side: 'left' | 'right' }[] = [];
   
-  const searchPattern = options.regex
-    ? new RegExp(query, options.caseSensitive ? 'g' : 'gi')
-    : query;
+  let searchPattern: RegExp | string = query;
+  if (options.regex) {
+    try {
+      searchPattern = new RegExp(query, options.caseSensitive ? 'g' : 'gi');
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`Invalid regular expression: ${detail}`);
+    }
+  }
   
   // Search in left side
   diff.left.forEach((line, index) => {
@@ -627,34 +633,48 @@ export function searchInDiff(
   return results;
 }
 
-// Navigate to specific JSON path
+/** `b.id`, `.b.id` and `$.b.id` all name the row the tree diff labels `$.b.id`. */
+function normalizeJsonPath(raw: string): string {
+  const p = raw.trim();
+  if (!p) return '';
+  if (p.startsWith('$')) return p;
+  if (p.startsWith('.') || p.startsWith('[')) return `$${p}`;
+  return `$.${p}`;
+}
+
+/**
+ * Find the row for a JSON path.
+ *
+ * Rows produced by the tree diff carry their exact path, so `$.b.id` lands
+ * on `b.id` and not on the first `id` in the document. The previous version
+ * built a RegExp from the last segment of the user's input, which both
+ * matched the wrong `id` and threw on any key containing `[` or `(`.
+ * Rows without path metadata (text diffs) fall back to a literal search for
+ * the last segment as a key.
+ */
 export function navigateToPath(
   diff: EnhancedDiffResult,
   jsonPath: string
 ): { line: number; side: 'left' | 'right' } | null {
-  // Convert JSONPath to line number in the diff
-  const pathPattern = jsonPath
-    .replace(/\$/g, '')
-    .replace(/\[(\d+)\]/g, '\\[$1\\]')
-    .replace(/\./g, '\\.');
-  
-  // Search for the path in the diff
-  const leftMatch = diff.left.findIndex(line =>
-    line.content && new RegExp(`"${pathPattern.split('.').pop()}"`).test(line.content)
-  );
-  
-  if (leftMatch !== -1) {
-    return { line: leftMatch, side: 'left' };
-  }
-  
-  const rightMatch = diff.right.findIndex(line =>
-    line.content && new RegExp(`"${pathPattern.split('.').pop()}"`).test(line.content)
-  );
-  
-  if (rightMatch !== -1) {
-    return { line: rightMatch, side: 'right' };
+  const wanted = normalizeJsonPath(jsonPath);
+  if (!wanted) return null;
+
+  for (const side of ['left', 'right'] as const) {
+    const line = diff[side].findIndex((l) => l.path === wanted);
+    if (line !== -1) return { line, side };
   }
 
+  const last = wanted.replace(/(\[\d+\])+$/, '').split('.').pop() ?? '';
+  if (!last || last === '$') return null;
+  const asJsonKey = `"${last}"`;
+  const asBareKey = `${last}:`;
+  for (const side of ['left', 'right'] as const) {
+    const line = diff[side].findIndex((l) => {
+      const c = l.content ?? '';
+      return c.includes(asJsonKey) || c.trimStart().startsWith(asBareKey);
+    });
+    if (line !== -1) return { line, side };
+  }
   return null;
 }
 

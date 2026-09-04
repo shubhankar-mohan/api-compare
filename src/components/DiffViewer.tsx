@@ -516,7 +516,13 @@ export function DiffViewer({ original, localhost }: DiffViewerProps) {
   // Handle search
   const handleSearch = (query: string, options: { caseSensitive?: boolean; regex?: boolean }) => {
     const enhancedDiff = bodyDiff as EnhancedDiffResult;
-    const results = searchInDiff(enhancedDiff, query, options);
+    let results: ReturnType<typeof searchInDiff>;
+    try {
+      results = searchInDiff(enhancedDiff, query, options);
+    } catch (err) {
+      toast({ title: 'Search failed', description: String(err instanceof Error ? err.message : err), variant: 'destructive' });
+      return;
+    }
     setSearchResults(results);
     setCurrentSearchIndex(0);
     

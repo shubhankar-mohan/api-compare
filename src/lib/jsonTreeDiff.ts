@@ -240,6 +240,14 @@ interface RenderCtx {
   /** Object key this value sits under, or null for array elements / the root. */
   key: string | null;
   comma: boolean;
+  /** JSONPath of this value; every emitted line is labelled with the path of the value it belongs to. */
+  path: string;
+}
+
+/** Rendered lines plus, in parallel, the JSONPath each line belongs to. */
+interface Rendered {
+  lines: string[];
+  paths: string[];
 }
 
 function head(key: string | null): string {
@@ -247,43 +255,65 @@ function head(key: string | null): string {
 }
 
 /** Render one value to the exact lines `JSON.stringify(v, null, 2)` would produce. */
-function renderLines(value: unknown, ctx: RenderCtx, sortKeys: boolean, out: string[] = []): string[] {
+function renderLines(
+  value: unknown,
+  ctx: RenderCtx,
+  sortKeys: boolean,
+  out: string[] = [],
+  paths: string[] = []
+): string[] {
   if (ctx.depth > MAX_TREE_DEPTH) throw new DiffDepthExceededError(ctx.depth);
   const p = pad(ctx.depth);
   const h = head(ctx.key);
   const tail = ctx.comma ? ',' : '';
   const kind = kindOf(value);
+  const emit = (line: string) => {
+    out.push(line);
+    paths.push(ctx.path);
+  };
 
   if (kind === 'scalar') {
-    out.push(`${p}${h}${JSON.stringify(value)}${tail}`);
+    emit(`${p}${h}${JSON.stringify(value)}${tail}`);
     return out;
   }
 
   if (kind === 'array') {
     const arr = value as unknown[];
     if (arr.length === 0) {
-      out.push(`${p}${h}[]${tail}`);
+      emit(`${p}${h}[]${tail}`);
       return out;
     }
-    out.push(`${p}${h}[`);
+    emit(`${p}${h}[`);
     arr.forEach((el, i) =>
-      renderLines(el, { depth: ctx.depth + 1, key: null, comma: i < arr.length - 1 }, sortKeys, out)
+      renderLines(
+        el,
+        { depth: ctx.depth + 1, key: null, comma: i < arr.length - 1, path: `${ctx.path}[${i}]` },
+        sortKeys,
+        out,
+        paths
+      )
     );
-    out.push(`${p}]${tail}`);
+    emit(`${p}]${tail}`);
     return out;
   }
 
   const obj = value as Record<string, unknown>;
   const keys = sortKeys ? Object.keys(obj).sort() : Object.keys(obj);
   if (keys.length === 0) {
-    out.push(`${p}${h}{}${tail}`);
+    emit(`${p}${h}{}${tail}`);
     return out;
   }
-  out.push(`${p}${h}{`);
+  emit(`${p}${h}{`);
   keys.forEach((k, i) =>
-    renderLines(obj[k], { depth: ctx.depth + 1, key: k, comma: i < keys.length - 1 }, sortKeys, out)
+    renderLines(
+      obj[k],
+      { depth: ctx.depth + 1, key: k, comma: i < keys.length - 1, path: `${ctx.path}.${k}` },
+      sortKeys,
+      out,
+      paths
+    )
   );
-  out.push(`${p}}${tail}`);
+  emit(`${p}}${tail}`);
   return out;
 }
 
@@ -293,6 +323,12 @@ function renderLines(value: unknown, ctx: RenderCtx, sortKeys: boolean, out: str
 interface RowMeta {
   noise?: NoiseAnnotation;
   fieldKey?: string | null;
+  path?: string;
+}
+
+/** First row of a group gets the group's metadata; every row gets its own path. */
+function groupRowMeta(i: number, path: string, meta?: RowMeta): RowMeta {
+  return i === 0 ? { ...meta, path } : { path };
 }
 
 class RowBuilder {
@@ -350,32 +386,36 @@ class RowBuilder {
     this.additions++;
   }
 
-  /** Metadata applies to the first row of a group — the one naming the field. */
-  removed(lines: string[], meta?: RowMeta) {
-    lines.forEach((line, i) => {
-      this.pushLeft(line, 'removed', undefined, i === 0 ? meta : undefined);
+  /**
+   * Metadata applies to the first row of a group — the one naming the field.
+   * Every row carries the path of the value it belongs to.
+   */
+  removed(r: Rendered, meta?: RowMeta) {
+    r.lines.forEach((line, i) => {
+      this.pushLeft(line, 'removed', undefined, groupRowMeta(i, r.paths[i], meta));
       this.padRight();
       this.removals++;
     });
   }
 
-  added(lines: string[], meta?: RowMeta) {
-    lines.forEach((line, i) => {
+  added(r: Rendered, meta?: RowMeta) {
+    r.lines.forEach((line, i) => {
       this.padLeft();
-      this.pushRight(line, 'added', undefined, i === 0 ? meta : undefined);
+      this.pushRight(line, 'added', undefined, groupRowMeta(i, r.paths[i], meta));
       this.additions++;
     });
   }
 
   /** Both sides present but explicitly not a difference (suppressed subtree). */
-  unchangedZip(leftLines: string[], rightLines: string[], meta?: RowMeta) {
-    const n = Math.max(leftLines.length, rightLines.length);
+  unchangedZip(left: Rendered, right: Rendered, meta?: RowMeta) {
+    const n = Math.max(left.lines.length, right.lines.length);
     for (let i = 0; i < n; i++) {
-      const rowMeta = i === 0 ? meta : undefined;
-      if (i < leftLines.length) this.pushLeft(leftLines[i], 'unchanged', undefined, rowMeta);
-      else this.padLeft();
-      if (i < rightLines.length) this.pushRight(rightLines[i], 'unchanged', undefined, rowMeta);
-      else this.padRight();
+      if (i < left.lines.length) {
+        this.pushLeft(left.lines[i], 'unchanged', undefined, groupRowMeta(i, left.paths[i], meta));
+      } else this.padLeft();
+      if (i < right.lines.length) {
+        this.pushRight(right.lines[i], 'unchanged', undefined, groupRowMeta(i, right.paths[i], meta));
+      } else this.padRight();
     }
   }
 
@@ -715,8 +755,10 @@ interface WalkState {
   degraded: boolean;
 }
 
-function renderOne(value: unknown, ctx: WalkCtx, comma: boolean, s: WalkState): string[] {
-  return renderLines(value, { depth: ctx.depth, key: ctx.key, comma }, s.sortKeys);
+function renderOne(value: unknown, ctx: WalkCtx, comma: boolean, s: WalkState): Rendered {
+  const paths: string[] = [];
+  const lines = renderLines(value, { depth: ctx.depth, key: ctx.key, comma, path: ctx.path }, s.sortKeys, [], paths);
+  return { lines, paths };
 }
 
 function walkPair(l: unknown, r: unknown, ctx: WalkCtx, s: WalkState): void {
@@ -728,6 +770,7 @@ function walkPair(l: unknown, r: unknown, ctx: WalkCtx, s: WalkState): void {
     s.b.unchangedZip(renderOne(l, ctx, ctx.leftComma, s), renderOne(r, ctx, ctx.rightComma, s), {
       noise: { type: rule.type, source: 'rule' },
       fieldKey: ctx.key,
+      path: ctx.path,
     });
     return;
   }
@@ -741,8 +784,9 @@ function walkPair(l: unknown, r: unknown, ctx: WalkCtx, s: WalkState): void {
 
   // Shape changed (object became a scalar, array became an object, ...).
   // Emit each side's subtree in full rather than pretending they align.
-  s.b.removed(renderOne(l, ctx, ctx.leftComma, s));
-  s.b.added(renderOne(r, ctx, ctx.rightComma, s));
+  const meta = { fieldKey: ctx.key, path: ctx.path };
+  s.b.removed(renderOne(l, ctx, ctx.leftComma, s), meta);
+  s.b.added(renderOne(r, ctx, ctx.rightComma, s), meta);
 }
 
 type Rec = Record<string, unknown>;
@@ -754,7 +798,7 @@ function walkScalars(l: unknown, r: unknown, ctx: WalkCtx, s: WalkState): void {
   const rightText = `${p}${h}${JSON.stringify(r)}${ctx.rightComma ? ',' : ''}`;
 
   if (l === r || normalizeScalar(l, s.normalization) === normalizeScalar(r, s.normalization)) {
-    s.b.pair(leftText, rightText, false, undefined, { fieldKey: ctx.key });
+    s.b.pair(leftText, rightText, false, undefined, { fieldKey: ctx.key, path: ctx.path });
     return;
   }
 
@@ -766,6 +810,7 @@ function walkScalars(l: unknown, r: unknown, ctx: WalkCtx, s: WalkState): void {
       s.b.pair(leftText, rightText, false, undefined, {
         noise: { type: legacy, source: 'legacy' },
         fieldKey: ctx.key,
+        path: ctx.path,
       });
       return;
     }
@@ -785,8 +830,9 @@ function walkScalars(l: unknown, r: unknown, ctx: WalkCtx, s: WalkState): void {
   // Suggestion chip lives on the right row; DiffViewer only renders it there.
   const suggestion = autoSuggestion(ctx.key, r) ?? autoSuggestion(ctx.key, l);
 
-  s.b.pair(leftText, rightText, true, segments, { fieldKey: ctx.key }, {
+  s.b.pair(leftText, rightText, true, segments, { fieldKey: ctx.key, path: ctx.path }, {
     fieldKey: ctx.key,
+    path: ctx.path,
     ...(suggestion ? { noise: { type: suggestion, source: 'auto' as const } } : {}),
   });
 }
@@ -799,7 +845,7 @@ function walkObjects(l: Rec, r: Rec, ctx: WalkCtx, s: WalkState): void {
   const rightKeys = s.sortKeys ? Object.keys(r).sort() : Object.keys(r);
 
   if (leftKeys.length === 0 && rightKeys.length === 0) {
-    s.b.pair(`${p}${h}{}${ctx.leftComma ? ',' : ''}`, `${p}${h}{}${ctx.rightComma ? ',' : ''}`, false);
+    s.b.pair(`${p}${h}{}${ctx.leftComma ? ',' : ''}`, `${p}${h}{}${ctx.rightComma ? ',' : ''}`, false, undefined, { path: ctx.path });
     return;
   }
 
@@ -816,7 +862,7 @@ function walkObjects(l: Rec, r: Rec, ctx: WalkCtx, s: WalkState): void {
   const lastLeft = leftKeys[leftKeys.length - 1];
   const lastRight = rightKeys[rightKeys.length - 1];
 
-  s.b.pair(`${p}${h}{`, `${p}${h}{`, false);
+  s.b.pair(`${p}${h}{`, `${p}${h}{`, false, undefined, { path: ctx.path });
 
   for (const key of order) {
     const inL = Object.prototype.hasOwnProperty.call(l, key);
@@ -828,9 +874,10 @@ function walkObjects(l: Rec, r: Rec, ctx: WalkCtx, s: WalkState): void {
       leftComma: inL && key !== lastLeft,
       rightComma: inR && key !== lastRight,
     };
+    const meta = { fieldKey: key, path: childCtx.path };
     if (inL && inR) walkPair(l[key], r[key], childCtx, s);
-    else if (inL) s.b.removed(renderOne(l[key], childCtx, childCtx.leftComma, s));
-    else s.b.added(renderOne(r[key], childCtx, childCtx.rightComma, s));
+    else if (inL) s.b.removed(renderOne(l[key], childCtx, childCtx.leftComma, s), meta);
+    else s.b.added(renderOne(r[key], childCtx, childCtx.rightComma, s), meta);
   }
 
   // Closing brace: the comma differs per side but that is never an edit.
@@ -842,11 +889,11 @@ function walkArrays(l: unknown[], r: unknown[], ctx: WalkCtx, s: WalkState): voi
   const h = head(ctx.key);
 
   if (l.length === 0 && r.length === 0) {
-    s.b.pair(`${p}${h}[]${ctx.leftComma ? ',' : ''}`, `${p}${h}[]${ctx.rightComma ? ',' : ''}`, false);
+    s.b.pair(`${p}${h}[]${ctx.leftComma ? ',' : ''}`, `${p}${h}[]${ctx.rightComma ? ',' : ''}`, false, undefined, { path: ctx.path });
     return;
   }
 
-  s.b.pair(`${p}${h}[`, `${p}${h}[`, false);
+  s.b.pair(`${p}${h}[`, `${p}${h}[`, false, undefined, { path: ctx.path });
 
   const keyField = pickKeyField(l, r, ctx.path, s.rules);
   const alignment = alignSequences(
@@ -879,7 +926,8 @@ function walkArrays(l: unknown[], r: unknown[], ctx: WalkCtx, s: WalkState): voi
       if (deepEquals(l[op.i], r[op.j], s.normalization) && childCtx.leftComma === childCtx.rightComma) {
         s.b.unchangedZip(
           renderOne(l[op.i], childCtx, childCtx.leftComma, s),
-          renderOne(r[op.j], childCtx, childCtx.rightComma, s)
+          renderOne(r[op.j], childCtx, childCtx.rightComma, s),
+          { path: childCtx.path }
         );
       } else {
         walkPair(l[op.i], r[op.j], childCtx, s);
@@ -892,7 +940,7 @@ function walkArrays(l: unknown[], r: unknown[], ctx: WalkCtx, s: WalkState): voi
         leftComma: op.i < l.length - 1,
         rightComma: false,
       };
-      s.b.removed(renderOne(l[op.i], childCtx, childCtx.leftComma, s));
+      s.b.removed(renderOne(l[op.i], childCtx, childCtx.leftComma, s), { path: childCtx.path });
     } else {
       const childCtx: WalkCtx = {
         path: `${ctx.path}[${op.j}]`,
@@ -901,7 +949,7 @@ function walkArrays(l: unknown[], r: unknown[], ctx: WalkCtx, s: WalkState): voi
         leftComma: false,
         rightComma: op.j < r.length - 1,
       };
-      s.b.added(renderOne(r[op.j], childCtx, childCtx.rightComma, s));
+      s.b.added(renderOne(r[op.j], childCtx, childCtx.rightComma, s), { path: childCtx.path });
     }
   }
 
@@ -925,8 +973,8 @@ export function computeJsonTreeDiff(
 
   // Estimating size up front is cheaper than unwinding a huge diff halfway.
   const estimatedRows =
-    renderLines(leftValue, { depth: 0, key: null, comma: false }, sortKeys).length +
-    renderLines(rightValue, { depth: 0, key: null, comma: false }, sortKeys).length;
+    renderLines(leftValue, { depth: 0, key: null, comma: false, path: '$' }, sortKeys).length +
+    renderLines(rightValue, { depth: 0, key: null, comma: false, path: '$' }, sortKeys).length;
 
   const state: WalkState = {
     b: new RowBuilder(),

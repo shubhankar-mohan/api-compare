@@ -42,6 +42,12 @@ export interface DiffLine {
   noise?: NoiseAnnotation;
   /** Object key this row renders, when it is an object member. */
   fieldKey?: string | null;
+  /**
+   * JSONPath of the value this row opens or renders (`$.items[1].sku`), set
+   * by the tree diff. Lets Go to Path resolve the exact row instead of
+   * searching the rendered text for a key name.
+   */
+  path?: string;
 }
 
 export interface DiffResult {

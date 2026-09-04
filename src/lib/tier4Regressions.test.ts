@@ -5,6 +5,12 @@
 import { describe, it, expect } from 'vitest';
 import { computeJsonTreeDiff } from './jsonTreeDiff';
 import { calculateSimilarity, clearSimilarityCache } from './inlineSegments';
+import {
+  computeEnhancedDiff,
+  navigateToPath,
+  searchInDiff,
+  type EnhancedDiffResult,
+} from './enhancedDiffAlgorithm';
 
 // ── A · options apply to array elements exactly as they do to object fields ─
 
@@ -247,5 +253,55 @@ describe('E: numeric epoch values under a time-like key are suggested as noise',
       type: 'epoch-millis',
       source: 'auto',
     });
+  });
+});
+
+// ── F · Go to Path is exact and never throws ──────────────────────────────
+
+describe('F: navigateToPath resolves the exact row and tolerates any key', () => {
+  const contentAt = (d: EnhancedDiffResult, hit: { line: number; side: 'left' | 'right' } | null) =>
+    hit ? d[hit.side][hit.line].content : null;
+
+  it('finds the row for the full path, not the first key with the same name', () => {
+    const d = computeEnhancedDiff('{"a":{"id":1},"b":{"id":2}}', '{"a":{"id":1},"b":{"id":3}}');
+    expect(contentAt(d, navigateToPath(d, '$.b.id'))).toContain('"id": 2');
+    expect(contentAt(d, navigateToPath(d, '$.a.id'))).toContain('"id": 1');
+  });
+
+  it('resolves an array index in the path', () => {
+    const d = computeEnhancedDiff(
+      '{"items":[{"sku":"A"},{"sku":"B"}]}',
+      '{"items":[{"sku":"A"},{"sku":"C"}]}'
+    );
+    expect(contentAt(d, navigateToPath(d, '$.items[1].sku'))).toContain('"sku": "B"');
+  });
+
+  it('accepts a path without the leading $', () => {
+    const d = computeEnhancedDiff('{"a":{"id":1},"b":{"id":2}}', '{"a":{"id":1},"b":{"id":3}}');
+    expect(contentAt(d, navigateToPath(d, 'b.id'))).toContain('"id": 2');
+  });
+
+  it('does not throw on keys containing regex metacharacters', () => {
+    const d = computeEnhancedDiff('{"a[b":1,"c(d":2}', '{"a[b":9,"c(d":2}');
+    expect(() => navigateToPath(d, '$.a[b')).not.toThrow();
+    expect(contentAt(d, navigateToPath(d, '$.a[b'))).toContain('"a[b": 1');
+    expect(() => navigateToPath(d, '$.c(d')).not.toThrow();
+  });
+
+  it('falls back to a literal key search for non-JSON diffs without throwing', () => {
+    const d = computeEnhancedDiff('name: a(b\nkind: x', 'name: a(b\nkind: y');
+    expect(() => navigateToPath(d, '$.a(b')).not.toThrow();
+  });
+
+  it('returns null for a path that is not present', () => {
+    const d = computeEnhancedDiff('{"a":1}', '{"a":2}');
+    expect(navigateToPath(d, '$.zzz')).toBeNull();
+  });
+});
+
+describe('F: searchInDiff reports an invalid regular expression instead of throwing raw', () => {
+  it('throws a message that names the problem', () => {
+    const d = computeEnhancedDiff('{"a":1}', '{"a":2}');
+    expect(() => searchInDiff(d, '(', { regex: true })).toThrow(/regular expression/i);
   });
 });
