@@ -48,7 +48,9 @@ export interface NoiseRulesFile {
   rules: NoiseRule[];
 }
 
-const SCHEMA_URL = 'https://diffchecker.dev/rules/v1.json';
+// An identifier for the file format, not a fetched document. It used to point at
+// diffchecker.dev, a domain this project does not own.
+const SCHEMA_URL = 'https://github.com/shubhankar-mohan/api-compare/blob/main/docs/rules-file-v1.md';
 const STORAGE_PREFIX = 'diffchecker:rules:';
 const MAX_ENDPOINT_LENGTH = 256;
 

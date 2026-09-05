@@ -94,46 +94,46 @@ export function ProxySetupGuide({ open, onOpenChange, onEnabled }: ProxySetupGui
             <Step n={1}>
               <span>Run this in a terminal and leave it open:</span>
               <div className="mt-2 flex items-center gap-2">
-                <code className="flex-1 rounded-md bg-muted px-3 py-2 font-mono text-xs break-all">
-                  {PROXY_INSTALL_COMMAND}
+                <code className="flex-1 rounded-md bg-muted px-3 py-2 font-mono text-[11px] break-all">
+                  {PROXY_DIRECT_COMMAND}
                 </code>
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => copyCommand(PROXY_INSTALL_COMMAND)}
+                  onClick={() => copyCommand(PROXY_DIRECT_COMMAND)}
                   title="Copy command"
                 >
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
               </div>
               <p className="mt-1.5 text-xs text-muted-foreground">
-                Needs Node 18+. Nothing is installed permanently — <code>npx</code> runs it
-                and forgets it.
+                Downloads the single zero-dependency proxy file from this project's repository
+                and runs it. Needs Node 18+. Nothing is installed.
               </p>
 
-              {/* The proxy is one zero-dependency file, so it can be fetched and
-                  run directly. Kept visible so the flow never depends on a
+              {/* The npm package is the tidier route once it is on the registry;
+                  the direct download works today and never depends on a
                   registry lookup succeeding. */}
               <details className="mt-2">
                 <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
-                  npx not available, or that command failed?
+                  Prefer npx?
                 </summary>
                 <div className="mt-2 flex items-center gap-2">
-                  <code className="flex-1 rounded-md bg-muted px-3 py-2 font-mono text-[11px] break-all">
-                    {PROXY_DIRECT_COMMAND}
+                  <code className="flex-1 rounded-md bg-muted px-3 py-2 font-mono text-xs break-all">
+                    {PROXY_INSTALL_COMMAND}
                   </code>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => copyCommand(PROXY_DIRECT_COMMAND)}
+                    onClick={() => copyCommand(PROXY_INSTALL_COMMAND)}
                     title="Copy command"
                   >
                     <Copy className="h-3.5 w-3.5" />
                   </Button>
                 </div>
                 <p className="mt-1.5 text-xs text-muted-foreground">
-                  Downloads the single proxy file and runs it. Same program, no registry
-                  involved.
+                  Same program from the npm registry. If npx reports the package is not found,
+                  it has not been published yet — use the command above.
                 </p>
               </details>
             </Step>
