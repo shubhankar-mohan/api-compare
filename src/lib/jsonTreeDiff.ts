@@ -45,8 +45,9 @@ export interface JsonTreeDiffOptions {
   /**
    * Render object keys in sorted order on both sides. JSON objects are
    * unordered, so this removes a whole class of false positives when the two
-   * environments use different serializers. Off means "keep each side's own
-   * order", which shows ordering differences as changes.
+   * environments use different serializers. Off means "render in the left
+   * side's order (right-only keys appended)"; members are still matched by
+   * name, so a pure reorder is not reported as a change either way.
    */
   sortKeys?: boolean;
   /** Compute inline (sub-line) highlight segments for changed scalars. */
@@ -74,12 +75,20 @@ interface ScalarNormalization {
   ignoreWhitespace: boolean;
 }
 
+/**
+ * A JSON-style decimal literal, optionally surrounded by whitespace. `Number()`
+ * alone also accepted `"0x1A"`, `"+1"` and `"Infinity"`, so semantic
+ * comparison folded hex to 26 and — because `JSON.stringify(Infinity)` is
+ * `null` — made `"Infinity"` equal to a real `null` inside array identity.
+ */
+const DECIMAL_LITERAL = /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
 function normalizeScalar(value: unknown, n: ScalarNormalization): unknown {
   let out = value;
 
   if (n.semanticComparison && typeof out === 'string') {
     const trimmed = out.trim();
-    if (trimmed !== '' && !Number.isNaN(Number(trimmed))) out = Number(trimmed);
+    if (DECIMAL_LITERAL.test(trimmed) && Number.isFinite(Number(trimmed))) out = Number(trimmed);
     else if (trimmed === 'true') out = true;
     else if (trimmed === 'false') out = false;
     else if (trimmed === 'null') out = null;
@@ -859,8 +868,12 @@ function walkObjects(l: Rec, r: Rec, ctx: WalkCtx, s: WalkState): void {
     order = [...leftKeys, ...rightKeys.filter((k) => !seen.has(k))];
   }
 
-  const lastLeft = leftKeys[leftKeys.length - 1];
-  const lastRight = rightKeys[rightKeys.length - 1];
+  // Commas follow the *emission* order: the last emitted key that exists on a
+  // side gets no comma on that side. Taking each document's own last key
+  // instead corrupted the right pane whenever key order differed (`{a,b}` vs
+  // `{b,a}` with sortKeys off rendered the right side as `"a": 1 / "b": 2,`).
+  const lastLeft = [...order].reverse().find((k) => Object.prototype.hasOwnProperty.call(l, k));
+  const lastRight = [...order].reverse().find((k) => Object.prototype.hasOwnProperty.call(r, k));
 
   s.b.pair(`${p}${h}{`, `${p}${h}{`, false, undefined, { path: ctx.path });
 
@@ -881,7 +894,7 @@ function walkObjects(l: Rec, r: Rec, ctx: WalkCtx, s: WalkState): void {
   }
 
   // Closing brace: the comma differs per side but that is never an edit.
-  s.b.pair(`${p}}${ctx.leftComma ? ',' : ''}`, `${p}}${ctx.rightComma ? ',' : ''}`, false);
+  s.b.pair(`${p}}${ctx.leftComma ? ',' : ''}`, `${p}}${ctx.rightComma ? ',' : ''}`, false, undefined, { path: ctx.path });
 }
 
 function walkArrays(l: unknown[], r: unknown[], ctx: WalkCtx, s: WalkState): void {
@@ -953,7 +966,7 @@ function walkArrays(l: unknown[], r: unknown[], ctx: WalkCtx, s: WalkState): voi
     }
   }
 
-  s.b.pair(`${p}]${ctx.leftComma ? ',' : ''}`, `${p}]${ctx.rightComma ? ',' : ''}`, false);
+  s.b.pair(`${p}]${ctx.leftComma ? ',' : ''}`, `${p}]${ctx.rightComma ? ',' : ''}`, false, undefined, { path: ctx.path });
 }
 
 /**

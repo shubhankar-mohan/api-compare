@@ -4,6 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { computeJsonTreeDiff } from './jsonTreeDiff';
+import { computeDiff } from './diffAlgorithm';
 import { calculateSimilarity, clearSimilarityCache } from './inlineSegments';
 import {
   computeEnhancedDiff,
@@ -313,5 +314,74 @@ describe('F: searchInDiff reports an invalid regular expression instead of throw
     // read "Invalid regular expression: Invalid regular expression: /(/gi".
     expect(message.match(/invalid regular expression/gi)?.length).toBe(1);
     expect(message).toContain('Unterminated group');
+  });
+});
+
+// ── G · engine findings from the property suite and targeted probes ────────
+
+describe('G: sortKeys:false keeps each pane parseable (I1)', () => {
+  const readBack = (rows: { type: string; content: string }[]) =>
+    JSON.parse(rows.filter((l) => l.type !== 'empty').map((l) => l.content).join('\n'));
+
+  it('key order differing between sides does not corrupt the right pane', () => {
+    const d = computeJsonTreeDiff({ a: 1, b: 2 }, { b: 2, a: 1 }, { sortKeys: false });
+    expect(readBack(d.left)).toEqual({ a: 1, b: 2 });
+    expect(readBack(d.right)).toEqual({ b: 2, a: 1 });
+  });
+
+  it('a right-only key that is not last on the right still gets its comma right', () => {
+    const d = computeJsonTreeDiff({ a: 1, z: 9 }, { n: 5, a: 1, z: 9 }, { sortKeys: false });
+    expect(readBack(d.right)).toEqual({ n: 5, a: 1, z: 9 });
+    expect(readBack(d.left)).toEqual({ a: 1, z: 9 });
+  });
+});
+
+describe('G: semantic comparison only folds real decimal numbers', () => {
+  const same = (a: unknown, b: unknown) =>
+    !computeJsonTreeDiff({ v: a }, { v: b }, { semanticComparison: true }).hasDifferences;
+
+  it('"Infinity" is not equal to null (JSON.stringify(Infinity) is null)', () => {
+    expect(same('Infinity', null)).toBe(false);
+    expect(computeJsonTreeDiff([{ id: 1, v: 'Infinity' }], [{ id: 1, v: null }], { semanticComparison: true }).hasDifferences).toBe(true);
+  });
+
+  it('"1e400" is not equal to null either', () => {
+    expect(same('1e400', null)).toBe(false);
+  });
+
+  it('hex and signed forms stay strings', () => {
+    expect(same('0x1A', 26)).toBe(false);
+    expect(same('+1', 1)).toBe(false);
+  });
+
+  it('plain decimals, exponents and surrounding whitespace still fold', () => {
+    expect(same('5', 5)).toBe(true);
+    expect(same('1.0', 1)).toBe(true);
+    expect(same('-2.5e3', -2500)).toBe(true);
+    expect(same(' 5 ', 5)).toBe(true);
+  });
+});
+
+describe('G: visually identical lines are flagged, and only when they differ', () => {
+  it('NFC vs NFD strings get an invisible-difference warning', () => {
+    const d = computeDiff(JSON.stringify({ n: 'café' }), JSON.stringify({ n: 'café' }));
+    expect(d.hasDifferences).toBe(true);
+    expect((d.warnings ?? []).join(' ')).toMatch(/invisible|Unicode/i);
+  });
+
+  it('CRLF vs LF with no differences does not warn that lines differ', () => {
+    const d = computeDiff('a\r\nb\r\n', 'a\nb\n');
+    expect(d.hasDifferences).toBe(false);
+    expect(d.warnings ?? []).toHaveLength(0);
+  });
+});
+
+describe('G: every rendered row carries a path', () => {
+  it('closing brackets of walked containers are labelled too', () => {
+    const d = computeJsonTreeDiff({ a: { b: 1 }, c: [1] }, { a: { b: 2 }, c: [1, 2] });
+    for (const row of [...d.left, ...d.right]) {
+      if (row.type === 'empty') continue;
+      expect(row.path, `row "${row.content}" has no path`).toMatch(/^\$/);
+    }
   });
 });

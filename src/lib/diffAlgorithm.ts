@@ -335,14 +335,26 @@ function invisibleOnlyWarnings(result: DiffResult): string[] {
     const left = result.left[i];
     const right = result.right[i];
     if (!left || !right || left.type === 'empty' || right.type === 'empty') continue;
+    // Only rows the diff actually reports as changed: a CR-only difference
+    // that the line normalization already folded is not a difference, and
+    // warning about it contradicted the "no differences" verdict.
+    if (left.type === 'unchanged' && right.type === 'unchanged') continue;
 
     const a = left.content ?? '';
     const b = right.content ?? '';
-    if (a !== b && stripInvisible(a) === stripInvisible(b)) {
+    if (a === b) continue;
+    if (stripInvisible(a) === stripInvisible(b)) {
       return [
         'Some lines differ only by invisible characters (zero-width spaces, non-breaking ' +
           'spaces, a BOM or control codes). They will look identical on screen. Turn on ' +
           '"Ignore invisible characters" to treat them as equal.',
+      ];
+    }
+    if (a.normalize('NFC') === b.normalize('NFC')) {
+      return [
+        'Some lines differ only in Unicode normalization form (the same accented ' +
+          'characters encoded as composed vs decomposed sequences). They will look ' +
+          'identical on screen; the bytes are different.',
       ];
     }
   }
