@@ -120,6 +120,9 @@ export function CurlInput({ onSubmit, isLoading }: CurlInputProps) {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-80 rounded-2xl">
+                  <p className="px-2 py-1.5 text-[11px] leading-snug text-muted-foreground">
+                    Saved in this browser only, including any auth headers. Clear it on a shared machine.
+                  </p>
                   {history.map((item) => (
                     <DropdownMenuItem
                       key={item.id}
