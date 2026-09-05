@@ -3,6 +3,7 @@ import { CurlInput } from '@/components/CurlInput';
 import { SummaryCard } from '@/components/SummaryCard';
 import { DiffViewer, type DiffSummary } from '@/components/DiffViewer';
 import { comparisonOutcome } from '@/lib/comparisonOutcome';
+import { toLocalhostRequest } from '@/lib/localhostRequest';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { TroubleshootSection } from '@/components/TroubleshootSection';
 import { CorsErrorCard } from '@/components/CorsErrorCard';
@@ -67,14 +68,7 @@ const Index = () => {
             return;
           }
           try {
-            const prodUrl = new URL(parsed.url);
-            const baseUrl = secondInput.endsWith('/') ? secondInput.slice(0, -1) : secondInput;
-            const localhostUrl = `${baseUrl}${prodUrl.pathname}${prodUrl.search}`;
-            let curlCmd = `curl '${localhostUrl}'`;
-            if (parsed.method !== 'GET') curlCmd += ` -X ${parsed.method}`;
-            for (const [key, value] of Object.entries(parsed.headers)) curlCmd += ` -H '${key}: ${value}'`;
-            if (parsed.body) curlCmd += ` -d '${parsed.body}'`;
-            parsed2 = parseCurl(curlCmd);
+            parsed2 = toLocalhostRequest(parsed, secondInput);
           } catch {
             toast({ title: 'Error constructing localhost URL', description: 'Failed to create localhost URL from production command', variant: 'destructive' });
             return;
