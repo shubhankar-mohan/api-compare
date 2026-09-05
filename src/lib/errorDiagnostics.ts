@@ -82,6 +82,56 @@ const COMMONLY_ALLOWED_HEADERS = new Set([
   'x-requested-with',
 ]);
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+export function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return LOOPBACK_HOSTS.has(h) || h.endsWith('.localhost') || h.startsWith('127.');
+}
+
+function isSafari(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  return /safari/i.test(ua) && !/chrome|chromium|crios|android|edg/i.test(ua);
+}
+
+function isIpAddress(hostname: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.startsWith('[');
+}
+
+/**
+ * Likely causes for "the server didn't respond", derived from the target.
+ *
+ * The card used to print the same three bullets for every target, so a
+ * refused http://localhost:9999 was explained with DNS and TLS certificates,
+ * neither of which can apply to a plain-http loopback address.
+ */
+export function unreachableHints(targetOrigin: string | null): string[] {
+  let url: URL | null = null;
+  try {
+    url = targetOrigin ? new URL(targetOrigin) : null;
+  } catch {
+    url = null;
+  }
+  if (!url) {
+    return ['DNS cannot resolve the hostname', 'TLS certificate is invalid or self-signed', 'Server is down or firewalled'];
+  }
+  const hints: string[] = [];
+  const host = url.hostname;
+  const port = url.port || (url.protocol === 'https:' ? '443' : '80');
+  if (isLoopbackHost(host)) {
+    hints.push(`Nothing is listening on port ${port} — is the local server running?`);
+  } else {
+    if (!isIpAddress(host)) hints.push('DNS cannot resolve the hostname');
+    hints.push('Server is down or firewalled');
+  }
+  if (url.protocol === 'https:') hints.push('TLS certificate is invalid or self-signed');
+  if (isLoopbackHost(host) && url.protocol === 'https:') {
+    hints.push('A local HTTPS server usually needs its certificate trusted by the browser first');
+  }
+  return hints;
+}
+
 function pageOrigin(): string {
   if (typeof window === 'undefined' || !window.location) return '';
   return window.location.origin;
@@ -186,7 +236,13 @@ export async function diagnoseFetchError(
     return { kind: 'bad-url', details: { ...baseDetails, targetOrigin: null } };
   }
 
-  const isMixedContent = origin.startsWith('https://') && parsed.protocol === 'http:';
+  // Browsers treat loopback as a potentially trustworthy origin, so an HTTPS
+  // page may fetch http://localhost — Safari excepted. Classifying it as mixed
+  // content sent every "nothing listening on :3000" to the wrong advice.
+  const isMixedContent =
+    origin.startsWith('https://') &&
+    parsed.protocol === 'http:' &&
+    (!isLoopbackHost(parsed.hostname) || isSafari());
 
   if (isMixedContent) {
     return { kind: 'mixed-content', details: { ...baseDetails, isMixedContent: true } };

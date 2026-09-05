@@ -26,7 +26,7 @@ import {
   Cookie,
 } from 'lucide-react';
 import { ApiResponse } from '@/lib/requestExecutor';
-import { ErrorKind } from '@/lib/errorDiagnostics';
+import { ErrorKind, unreachableHints } from '@/lib/errorDiagnostics';
 import { CorsInstallGuide } from './CorsInstallGuide';
 import { ProxySetupGuide } from './ProxySetupGuide';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
@@ -224,6 +224,7 @@ function ErrorBody({
       return (
         <UnreachableBody
           url={diagnosis?.details.url ?? ''}
+          targetOrigin={diagnosis?.details.targetOrigin ?? null}
           viaProxy={diagnosis?.details.viaProxy ?? false}
           rawError={rawError}
           onSwitchToTextDiff={onSwitchToTextDiff}
@@ -374,11 +375,13 @@ function OfflineBody({ onRetry }: { onRetry?: () => void }) {
 
 function UnreachableBody({
   url,
+  targetOrigin,
   viaProxy,
   rawError,
   onSwitchToTextDiff,
 }: {
   url: string;
+  targetOrigin: string | null;
   viaProxy: boolean;
   rawError?: string;
   onSwitchToTextDiff?: () => void;
@@ -394,9 +397,9 @@ function UnreachableBody({
         </code>
       ) : (
         <ul className="text-sm space-y-1.5 ml-1">
-          <Bullet>DNS can't resolve the hostname</Bullet>
-          <Bullet>TLS certificate is invalid or self-signed</Bullet>
-          <Bullet>Server is down or firewalled</Bullet>
+          {unreachableHints(targetOrigin).map((hint) => (
+            <Bullet key={hint}>{hint}</Bullet>
+          ))}
         </ul>
       )}
       <div className="flex flex-wrap gap-2 pt-1">
