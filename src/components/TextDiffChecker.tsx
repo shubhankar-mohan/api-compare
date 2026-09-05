@@ -364,17 +364,11 @@ export function TextDiffChecker() {
     }
     setHasCompared(true);
 
-    // Use the memoized diff result after state update triggers recompute
-    // We schedule the toast for after the next render when diff is available
-    setTimeout(() => {
-      const left = isJson ? formatJson(leftText) : leftText;
-      const right = isJson ? formatJson(rightText) : rightText;
-      const hasDiff = left !== right;
-      toast({
-        title: 'Comparison complete',
-        description: hasDiff ? 'Differences found' : 'Texts are identical'
-      });
-    }, 0);
+    // The verdict comes from the rendered diff (it honours the Diff Options
+    // and key order), so the toast does not judge the raw text itself: a
+    // key-order-only change used to toast "Differences found" while the
+    // result card said none.
+    toast({ title: 'Comparison complete', description: 'The result is shown below.' });
   };
 
   const handleClear = () => {

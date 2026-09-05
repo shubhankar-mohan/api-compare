@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { CurlInput } from '@/components/CurlInput';
 import { SummaryCard } from '@/components/SummaryCard';
 import { DiffViewer, type DiffSummary } from '@/components/DiffViewer';
+import { comparisonOutcome } from '@/lib/comparisonOutcome';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { TroubleshootSection } from '@/components/TroubleshootSection';
 import { CorsErrorCard } from '@/components/CorsErrorCard';
@@ -98,8 +99,7 @@ const Index = () => {
       });
       setResult(comparisonResult);
       setDiffSummary(null);
-      const hasDiff = comparisonResult.original.body !== comparisonResult.localhost.body || comparisonResult.original.status !== comparisonResult.localhost.status;
-      toast({ title: 'Comparison complete', description: hasDiff ? 'Differences found between responses' : 'Responses are identical' });
+      toast(comparisonOutcome(comparisonResult));
     } catch (error) {
       toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to execute comparison', variant: 'destructive' });
     } finally {
