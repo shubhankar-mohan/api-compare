@@ -1,3 +1,4 @@
+import { finalizeMergedJson } from '@/lib/mergeText';
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -132,7 +133,9 @@ export function MergeView({
       }
     }
     
-    return result.join('\n');
+    // Line-level splicing cannot get every comma right; repair them when the
+    // result is JSON-shaped so what the user downloads actually parses.
+    return finalizeMergedJson(result.join('\n')).text;
   }, [leftLines, rightLines, mergeDecisions]);
 
   // Copy merged result
