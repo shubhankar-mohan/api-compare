@@ -190,6 +190,7 @@ function kindFromProxyError(proxyErrorKind?: string): ErrorKind {
     case 'proxy-unreachable':
       return 'proxy-unreachable';
     case 'bad-request':
+    case 'too-large':
       return 'bad-url';
     default:
       return 'unknown';
