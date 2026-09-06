@@ -559,7 +559,7 @@ export function DiffViewer({ original, localhost, onSummary }: DiffViewerProps) 
       setHighlightedLine({ line: results[0].line, side: results[0].side });
       toast({
         title: `Found ${results.length} match${results.length !== 1 ? 'es' : ''}`,
-        description: 'Use arrows to navigate between results'
+        description: 'Alt+↓ / Alt+↑ to move between matches'
       });
     } else {
       toast({
@@ -647,12 +647,25 @@ export function DiffViewer({ original, localhost, onSummary }: DiffViewerProps) 
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [focusedLine, bodyDiff, endpointRules, handleTeach, handleForgetByPath]);
 
-  // Keyboard navigation for search results
+  // Search hits index into the rows of one particular diff. When the diff is
+  // recomputed (a rule taught, an option toggled) those indices point at
+  // other rows, so the results and the highlight are dropped with it.
+  useEffect(() => {
+    setSearchResults([]);
+    setCurrentSearchIndex(0);
+    setHighlightedLine(null);
+  }, [bodyDiff]);
+
+  // Keyboard navigation for search results. Alt+Arrow is the documented
+  // binding: Cmd/Ctrl+N opens a new window in Chrome and cannot be
+  // intercepted, so it is kept only as a best-effort alias.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (searchResults.length === 0) return;
+      const next = (e.altKey && e.key === 'ArrowDown') || (e.key === 'n' && (e.metaKey || e.ctrlKey));
+      const prev = (e.altKey && e.key === 'ArrowUp') || (e.key === 'p' && (e.metaKey || e.ctrlKey));
 
-      if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
+      if (next) {
         e.preventDefault();
         const nextIndex = (currentSearchIndex + 1) % searchResults.length;
         setCurrentSearchIndex(nextIndex);
@@ -660,7 +673,7 @@ export function DiffViewer({ original, localhost, onSummary }: DiffViewerProps) 
           line: searchResults[nextIndex].line, 
           side: searchResults[nextIndex].side 
         });
-      } else if (e.key === 'p' && (e.metaKey || e.ctrlKey)) {
+      } else if (prev) {
         e.preventDefault();
         const prevIndex = currentSearchIndex === 0 
           ? searchResults.length - 1 
@@ -717,12 +730,6 @@ export function DiffViewer({ original, localhost, onSummary }: DiffViewerProps) 
               <Badge variant="outline" className="gap-1">
                 <TrendingUp className="h-3 w-3" />
                 {statistics.percentageChanged.toFixed(1)}% changed
-              </Badge>
-            )}
-            {structuralChangesCount > 0 && (
-              <Badge variant="secondary" className="gap-1">
-                <GitBranch className="h-3 w-3" />
-                {structuralChangesCount} moves
               </Badge>
             )}
           </div>
@@ -959,6 +966,7 @@ export function DiffViewer({ original, localhost, onSummary }: DiffViewerProps) 
     {/* Merge Dialog */}
     <Dialog open={showMergeDialog} onOpenChange={setShowMergeDialog}>
       <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-hidden p-0">
+        <DialogTitle className="sr-only">Merge changes</DialogTitle>
         <MergeView
           leftLines={bodyDiff.left}
           rightLines={bodyDiff.right}

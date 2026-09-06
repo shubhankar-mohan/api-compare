@@ -78,7 +78,8 @@ function DiffLineComponent({
   onAcceptChange,
   onRejectChange,
   showMergeControls,
-  lineIndex
+  lineIndex,
+  isHighlighted,
 }: { 
   line: DiffLine; 
   isJson?: boolean; 
@@ -87,6 +88,7 @@ function DiffLineComponent({
   onRejectChange?: (lineIndex: number, side: 'left' | 'right') => void;
   showMergeControls?: boolean;
   lineIndex?: number;
+  isHighlighted?: boolean;
 }) {
   const bgClass = {
     added: 'bg-[hsl(var(--diff-added-bg))]',
@@ -108,7 +110,14 @@ function DiffLineComponent({
   const canMerge = showMergeControls && (line.type === 'added' || line.type === 'removed' || line.type === 'modified');
 
   return (
-    <div className={cn('flex font-mono text-sm min-w-fit relative group', bgClass)}>
+    <div
+      id={lineIndex !== undefined ? `text-diff-line-${side}-${lineIndex}` : undefined}
+      className={cn(
+        'flex font-mono text-sm min-w-fit relative group',
+        bgClass,
+        isHighlighted && 'ring-2 ring-accent ring-offset-1 bg-accent/10'
+      )}
+    >
       <div className="w-12 flex-shrink-0 px-2 py-0.5 text-right text-[hsl(var(--diff-line-number))] bg-[hsl(var(--diff-line-number-bg))] select-none border-r border-border sticky left-0 z-10">
         {line.lineNumber ?? ''}
       </div>
@@ -169,6 +178,8 @@ function DiffPanel({
   onAcceptChange,
   onRejectChange,
   showMergeControls,
+  showOnlyDifferences = false,
+  highlightedLine = null,
 }: { 
   title: string;
   lines: DiffLine[];
@@ -183,6 +194,9 @@ function DiffPanel({
   onAcceptChange?: (lineIndex: number, side: 'left' | 'right') => void;
   onRejectChange?: (lineIndex: number, side: 'left' | 'right') => void;
   showMergeControls?: boolean;
+  /** Hide unchanged rows. Filtering happens here so merge callbacks keep the row's real index. */
+  showOnlyDifferences?: boolean;
+  highlightedLine?: { line: number; side: 'left' | 'right' } | null;
 }) {
   const copyToClipboard = () => {
     navigator.clipboard.writeText(content);
@@ -232,18 +246,21 @@ function DiffPanel({
         </div>
       </div>
       <div className="min-w-0 overflow-x-auto overflow-y-hidden">
-        {lines.map((line, idx) => (
-          <DiffLineComponent 
-            key={idx} 
-            line={line} 
-            isJson={isJson} 
-            side={side}
-            onAcceptChange={onAcceptChange}
-            onRejectChange={onRejectChange}
-            showMergeControls={showMergeControls}
-            lineIndex={idx}
-          />
-        ))}
+        {lines.map((line, idx) =>
+          showOnlyDifferences && line.type === 'unchanged' ? null : (
+            <DiffLineComponent
+              key={idx}
+              line={line}
+              isJson={isJson}
+              side={side}
+              onAcceptChange={onAcceptChange}
+              onRejectChange={onRejectChange}
+              showMergeControls={showMergeControls}
+              lineIndex={idx}
+              isHighlighted={highlightedLine?.side === side && highlightedLine.line === idx}
+            />
+          )
+        )}
       </div>
     </div>
   );
@@ -396,7 +413,7 @@ export function TextDiffChecker() {
     setCurrentSearchIndex(0);
     if (results.length > 0) {
       setHighlightedLine({ line: results[0].line, side: results[0].side });
-      toast({ title: `Found ${results.length} match${results.length !== 1 ? 'es' : ''}`, description: 'Use Cmd/Ctrl+N/P to navigate' });
+      toast({ title: `Found ${results.length} match${results.length !== 1 ? 'es' : ''}`, description: 'Alt+↓ / Alt+↑ to move between matches' });
     } else {
       toast({ title: 'No matches found', variant: 'destructive' });
     }
@@ -415,15 +432,24 @@ export function TextDiffChecker() {
   };
 
   // Keyboard navigation for search results
+  // Hits index into one particular diff; drop them when it is recomputed.
+  useEffect(() => {
+    setSearchResults([]);
+    setCurrentSearchIndex(0);
+    setHighlightedLine(null);
+  }, [diff]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (searchResults.length === 0) return;
-      if (e.key === 'n' && (e.metaKey || e.ctrlKey)) {
+      const next = (e.altKey && e.key === 'ArrowDown') || (e.key === 'n' && (e.metaKey || e.ctrlKey));
+      const prev = (e.altKey && e.key === 'ArrowUp') || (e.key === 'p' && (e.metaKey || e.ctrlKey));
+      if (next) {
         e.preventDefault();
         const nextIndex = (currentSearchIndex + 1) % searchResults.length;
         setCurrentSearchIndex(nextIndex);
         setHighlightedLine({ line: searchResults[nextIndex].line, side: searchResults[nextIndex].side });
-      } else if (e.key === 'p' && (e.metaKey || e.ctrlKey)) {
+      } else if (prev) {
         e.preventDefault();
         const prevIndex = currentSearchIndex === 0 ? searchResults.length - 1 : currentSearchIndex - 1;
         setCurrentSearchIndex(prevIndex);
@@ -539,7 +565,8 @@ export function TextDiffChecker() {
       }
     }
     
-    setMergedText(mergedLines.filter(line => line !== '').join('\n'));
+    // Blank lines are content too; filtering them out changed the document.
+    setMergedText(mergedLines.join('\n'));
   };
 
   const handleStartMerge = () => {
@@ -1091,12 +1118,7 @@ export function TextDiffChecker() {
                       {statistics.percentageChanged.toFixed(1)}% changed
                     </Badge>
                   )}
-                  {structuralChangesCount > 0 && (
-                    <Badge variant="secondary" className="gap-1">
-                      <GitBranch className="h-3 w-3" />
-                      {structuralChangesCount} moves
-                    </Badge>
-                  )}
+                  
                 </div>
               </div>
             </CardHeader>
@@ -1202,7 +1224,9 @@ export function TextDiffChecker() {
                 <div className="grid grid-cols-1 md:grid-cols-2 md:divide-x border-t mt-4 overflow-hidden">
                   <DiffPanel
                     title="Text A"
-                    lines={diffOptions.showOnlyDifferences ? diff.left.filter(l => l.type !== 'unchanged') : diff.left}
+                    lines={diff.left}
+                    showOnlyDifferences={diffOptions.showOnlyDifferences}
+                    highlightedLine={highlightedLine}
                     lineCount={leftText.split('\n').length}
                     removals={diff.removals}
                     side="left"
@@ -1216,7 +1240,9 @@ export function TextDiffChecker() {
                   />
                   <DiffPanel
                     title="Text B"
-                    lines={diffOptions.showOnlyDifferences ? diff.right.filter(l => l.type !== 'unchanged') : diff.right}
+                    lines={diff.right}
+                    showOnlyDifferences={diffOptions.showOnlyDifferences}
+                    highlightedLine={highlightedLine}
                     lineCount={rightText.split('\n').length}
                     additions={diff.additions}
                     side="right"
@@ -1309,6 +1335,7 @@ export function TextDiffChecker() {
     {diff && (
       <Dialog open={showMergeDialog} onOpenChange={setShowMergeDialog}>
         <DialogContent className="max-w-[90vw] max-h-[90vh] overflow-hidden p-0">
+          <DialogTitle className="sr-only">Merge changes</DialogTitle>
           <MergeView
             leftLines={diff.left}
             rightLines={diff.right}
