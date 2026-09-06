@@ -1,6 +1,6 @@
 # @shubhankar-mohan/diffchecker-proxy
 
-A ~250-line, zero-dependency relay that lets [DiffChecker](https://diffchecker.dev) compare
+A single-file, zero-dependency relay that lets [DiffChecker](https://github.com/shubhankar-mohan/api-compare) compare
 API responses the browser refuses to read.
 
 ```bash
@@ -58,14 +58,14 @@ your browser  ──▶  127.0.0.1 (this process)  ──▶  the API
 
 ```
   -p, --port <n>            Port to listen on (default 8787)
-      --allow-origin <o>    Additional allowed origin; repeatable, or '*'
+      --allow-origin <o>    Allow a hosted copy of the app; repeatable, or '*'
       --timeout <ms>        Upstream request timeout (default 30000)
   -h, --help
   -v, --version
 ```
 
-By default only `https://diffchecker.dev` and any `localhost` / `127.0.0.1` origin may
-use the proxy. If you self-host DiffChecker somewhere else:
+By default only pages served from `localhost` / `127.0.0.1` (any port) may use the
+proxy. A hosted copy of DiffChecker must be named explicitly:
 
 ```bash
 npx @shubhankar-mohan/diffchecker-proxy --allow-origin https://diffchecker.internal.corp

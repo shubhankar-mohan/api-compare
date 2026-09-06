@@ -25,12 +25,21 @@
 import type { DiffLine, DiffResult, DiffSegment, NoiseAnnotation } from './diffTypes';
 import { computeScalarRowSegments } from './inlineSegments';
 import { alignSequences, type AlignOp } from './sequenceAlign';
-import { ruleMatchesPath, type NoiseRule } from './noiseRules';
+import { isValidRulePath, ruleMatchesPath, type NoiseRule } from './noiseRules';
 import { CLASSIFIERS, detectFieldType, getClassifier, type NoiseClassifier } from './smartComparison';
 
 export interface JsonTreeDiffOptions {
   /** Saved noise rules. A matching path is rendered greyed and not counted. */
   rules?: NoiseRule[];
+  /**
+   * Paths from the Diff Options panel ("ignore key" → `$..key`, "ignore
+   * path" → the path). Applied exactly like rules — rendered, greyed, not
+   * counted, masked for array identity — and labelled `source: 'option'`.
+   * They used to delete the members from the document before diffing, so
+   * the panes stopped reading back as the response and the merge dropped
+   * every ignored key.
+   */
+  ignoredPaths?: string[];
   /**
    * Legacy heuristic suppression of id-shaped and timestamp-shaped values.
    *
@@ -45,8 +54,9 @@ export interface JsonTreeDiffOptions {
   /**
    * Render object keys in sorted order on both sides. JSON objects are
    * unordered, so this removes a whole class of false positives when the two
-   * environments use different serializers. Off means "keep each side's own
-   * order", which shows ordering differences as changes.
+   * environments use different serializers. Off means "render in the left
+   * side's order (right-only keys appended)"; members are still matched by
+   * name, so a pure reorder is not reported as a change either way.
    */
   sortKeys?: boolean;
   /** Compute inline (sub-line) highlight segments for changed scalars. */
@@ -74,12 +84,20 @@ interface ScalarNormalization {
   ignoreWhitespace: boolean;
 }
 
+/**
+ * A JSON-style decimal literal, optionally surrounded by whitespace. `Number()`
+ * alone also accepted `"0x1A"`, `"+1"` and `"Infinity"`, so semantic
+ * comparison folded hex to 26 and — because `JSON.stringify(Infinity)` is
+ * `null` — made `"Infinity"` equal to a real `null` inside array identity.
+ */
+const DECIMAL_LITERAL = /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
 function normalizeScalar(value: unknown, n: ScalarNormalization): unknown {
   let out = value;
 
   if (n.semanticComparison && typeof out === 'string') {
     const trimmed = out.trim();
-    if (trimmed !== '' && !Number.isNaN(Number(trimmed))) out = Number(trimmed);
+    if (DECIMAL_LITERAL.test(trimmed) && Number.isFinite(Number(trimmed))) out = Number(trimmed);
     else if (trimmed === 'true') out = true;
     else if (trimmed === 'false') out = false;
     else if (trimmed === 'null') out = null;
@@ -196,6 +214,15 @@ function canonical(value: unknown, n: ScalarNormalization = EXACT): string {
 }
 
 const NOISE_PLACEHOLDER = '" noise"';
+
+/** Rules synthesised from `ignoredPaths`; they render as `source: 'option'`. */
+const OPTION_RULES = new WeakSet<NoiseRule>();
+
+function noiseFor(rule: NoiseRule): NoiseAnnotation {
+  return OPTION_RULES.has(rule)
+    ? { type: 'ignored', source: 'option' }
+    : { type: rule.type, source: 'rule' };
+}
 
 /**
  * Canonical form with rule-suppressed paths collapsed to a placeholder.
@@ -768,7 +795,7 @@ function walkPair(l: unknown, r: unknown, ctx: WalkCtx, s: WalkState): void {
   const rule = matchingRule(s.rules, ctx.path);
   if (rule) {
     s.b.unchangedZip(renderOne(l, ctx, ctx.leftComma, s), renderOne(r, ctx, ctx.rightComma, s), {
-      noise: { type: rule.type, source: 'rule' },
+      noise: noiseFor(rule),
       fieldKey: ctx.key,
       path: ctx.path,
     });
@@ -859,8 +886,12 @@ function walkObjects(l: Rec, r: Rec, ctx: WalkCtx, s: WalkState): void {
     order = [...leftKeys, ...rightKeys.filter((k) => !seen.has(k))];
   }
 
-  const lastLeft = leftKeys[leftKeys.length - 1];
-  const lastRight = rightKeys[rightKeys.length - 1];
+  // Commas follow the *emission* order: the last emitted key that exists on a
+  // side gets no comma on that side. Taking each document's own last key
+  // instead corrupted the right pane whenever key order differed (`{a,b}` vs
+  // `{b,a}` with sortKeys off rendered the right side as `"a": 1 / "b": 2,`).
+  const lastLeft = [...order].reverse().find((k) => Object.prototype.hasOwnProperty.call(l, k));
+  const lastRight = [...order].reverse().find((k) => Object.prototype.hasOwnProperty.call(r, k));
 
   s.b.pair(`${p}${h}{`, `${p}${h}{`, false, undefined, { path: ctx.path });
 
@@ -881,7 +912,7 @@ function walkObjects(l: Rec, r: Rec, ctx: WalkCtx, s: WalkState): void {
   }
 
   // Closing brace: the comma differs per side but that is never an edit.
-  s.b.pair(`${p}}${ctx.leftComma ? ',' : ''}`, `${p}}${ctx.rightComma ? ',' : ''}`, false);
+  s.b.pair(`${p}}${ctx.leftComma ? ',' : ''}`, `${p}}${ctx.rightComma ? ',' : ''}`, false, undefined, { path: ctx.path });
 }
 
 function walkArrays(l: unknown[], r: unknown[], ctx: WalkCtx, s: WalkState): void {
@@ -953,7 +984,7 @@ function walkArrays(l: unknown[], r: unknown[], ctx: WalkCtx, s: WalkState): voi
     }
   }
 
-  s.b.pair(`${p}]${ctx.leftComma ? ',' : ''}`, `${p}]${ctx.rightComma ? ',' : ''}`, false);
+  s.b.pair(`${p}]${ctx.leftComma ? ',' : ''}`, `${p}]${ctx.rightComma ? ',' : ''}`, false, undefined, { path: ctx.path });
 }
 
 /**
@@ -1008,9 +1039,15 @@ export function computeJsonTreeDiff(
   // Estimating size up front is cheaper than unwinding a huge diff halfway.
   const estimatedRows = countRenderedRows(leftValue) + countRenderedRows(rightValue);
 
+  const optionRules: NoiseRule[] = (options.ignoredPaths ?? [])
+    .filter(isValidRulePath)
+    .map((path) => ({ path, type: 'uuid', source: 'manual', createdAt: 0 }));
+  for (const rule of optionRules) OPTION_RULES.add(rule);
+  const rules = optionRules.length ? [...(options.rules ?? []), ...optionRules] : options.rules;
+
   const state: WalkState = {
     b: new RowBuilder(),
-    rules: options.rules,
+    rules,
     legacyAutoIgnore: options.legacyAutoIgnore === true,
     sortKeys,
     inlineSegments: options.inlineSegments !== false && estimatedRows <= INLINE_SEGMENT_MAX_ROWS,

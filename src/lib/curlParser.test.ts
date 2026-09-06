@@ -426,7 +426,7 @@ describe('curlParser', () => {
     });
 
     it('returns empty string for invalid URL', () => {
-      const result = parseCurl('curl not-a-url');
+      const result = parseCurl("curl 'not a url'");
       expect(result.originalDomain).toBe('');
     });
   });
@@ -460,5 +460,75 @@ describe('curlParser', () => {
       const result = parseCurl("curl --unknown-flag 'https://api.example.com'");
       expect(result.url).toBe('https://api.example.com');
     });
+  });
+});
+
+// ── Review follow-ups: shell quoting idioms, Windows cmd exports, -G/-F, glued short options ──
+
+describe('parseCurl — quoting idioms and glued options (review follow-ups)', () => {
+  it("joins adjacent quoted runs: the bash '\"'\"' apostrophe idiom", () => {
+    const r = parseCurl(`curl 'https://api.example.com/v1/users' -d '{"name":"O'"'"'Brien","x":1}'`);
+    expect(r.body).toBe(`{"name":"O'Brien","x":1}`);
+    expect(r.method).toBe('POST');
+  });
+
+  it("joins adjacent quoted runs: the Postman '\\'' idiom", () => {
+    const r = parseCurl(`curl 'https://api.example.com/v1/users' --data '{"name":"O'\\''Brien"}'`);
+    expect(r.body).toBe(`{"name":"O'Brien"}`);
+  });
+
+  it('joins a quoted run glued to an unquoted prefix', () => {
+    const r = parseCurl(`curl https://api.example.com/x -H X-Msg:"it's fine"`);
+    expect(r.headers['X-Msg']).toBe("it's fine");
+  });
+
+  it('accepts Chrome "Copy as cURL (cmd)" caret escaping', () => {
+    const r = parseCurl(`curl ^"https://api.example.com/v1/items^" ^\n  -H ^"accept: application/json^" ^\n  -H ^"x-token: a^&b^"`);
+    expect(r.url).toBe('https://api.example.com/v1/items');
+    expect(r.headers['accept']).toBe('application/json');
+    expect(r.headers['x-token']).toBe('a&b');
+  });
+
+  it('-G moves the data into the query string and keeps GET', () => {
+    const r = parseCurl(`curl -G https://api.example.com/search -d q=hello -d limit=10`);
+    expect(r.method).toBe('GET');
+    expect(r.url).toBe('https://api.example.com/search?q=hello&limit=10');
+    expect(r.body).toBeNull();
+  });
+
+  it('-G appends to an existing query string', () => {
+    const r = parseCurl(`curl --get 'https://api.example.com/search?page=2' --data-urlencode 'q=a b'`);
+    expect(r.url).toBe('https://api.example.com/search?page=2&q=a%20b');
+  });
+
+  it('-F implies POST and keeps the form fields as the body', () => {
+    const r = parseCurl(`curl https://api.example.com/upload -F 'name=test' -F 'file=@x.png'`);
+    expect(r.method).toBe('POST');
+    expect(r.body).toContain('name=test');
+    expect(r.body).toContain('file=@x.png');
+  });
+
+  it('splits glued short options: -XPUT, -H"...", -d\'...\'', () => {
+    const r = parseCurl(`curl -XPUT -H"Content-Type: application/json" -d'{"a":1}' https://api.example.com/x/1`);
+    expect(r.method).toBe('PUT');
+    expect(r.headers['Content-Type']).toBe('application/json');
+    expect(r.body).toBe('{"a":1}');
+    expect(r.url).toBe('https://api.example.com/x/1');
+  });
+
+  it('-XDELETE with no body is DELETE, not GET', () => {
+    const r = parseCurl(`curl -XDELETE https://api.example.com/x/1`);
+    expect(r.method).toBe('DELETE');
+  });
+
+  it('defaults a scheme-less URL to http://, as curl does', () => {
+    const r = parseCurl(`curl api.example.com/v1/users`);
+    expect(r.url).toBe('http://api.example.com/v1/users');
+    expect(r.originalDomain).toBe('http://api.example.com');
+    expect(parseCurl(`curl localhost:8080/v1/x`).url).toBe('http://localhost:8080/v1/x');
+  });
+
+  it('does not touch a URL that already has a scheme', () => {
+    expect(parseCurl(`curl https://api.example.com/`).url).toBe('https://api.example.com/');
   });
 });

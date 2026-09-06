@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { cn } from '@/lib/utils';
 
 interface JsonSyntaxHighlightProps {
@@ -5,74 +6,87 @@ interface JsonSyntaxHighlightProps {
   className?: string;
 }
 
-export function JsonSyntaxHighlight({ content, className }: JsonSyntaxHighlightProps) {
-  const highlightJson = (text: string) => {
-    // Regex patterns for different JSON elements
-    const patterns = [
-      // Strings (keys and values)
-      { regex: /"([^"\\]|\\.)*"/g, class: 'text-[hsl(var(--syntax-string))]' },
-      // Numbers
-      { regex: /\b-?\d+\.?\d*([eE][+-]?\d+)?\b/g, class: 'text-[hsl(var(--syntax-number))]' },
-      // Booleans
-      { regex: /\b(true|false)\b/g, class: 'text-[hsl(var(--syntax-boolean))]' },
-      // Null
-      { regex: /\bnull\b/g, class: 'text-[hsl(var(--syntax-null))]' },
-      // Brackets and braces
-      { regex: /[{}[\]]/g, class: 'text-[hsl(var(--syntax-bracket))]' },
-      // Colons and commas
-      { regex: /[,:]/g, class: 'text-[hsl(var(--syntax-punctuation))]' },
-    ];
+// Priority order: strings first so numbers/booleans inside a string are not
+// matched on their own.
+const PATTERNS: { regex: RegExp; cls: string }[] = [
+  { regex: /"([^"\\]|\\.)*"/g, cls: 'text-[hsl(var(--syntax-string))]' },
+  { regex: /\b-?\d+\.?\d*([eE][+-]?\d+)?\b/g, cls: 'text-[hsl(var(--syntax-number))]' },
+  { regex: /\b(true|false)\b/g, cls: 'text-[hsl(var(--syntax-boolean))]' },
+  { regex: /\bnull\b/g, cls: 'text-[hsl(var(--syntax-null))]' },
+  { regex: /[{}[\]]/g, cls: 'text-[hsl(var(--syntax-bracket))]' },
+  { regex: /[,:]/g, cls: 'text-[hsl(var(--syntax-punctuation))]' },
+];
 
-    let result = text;
-    const claimed = new Set<number>();
-    const tokens: { start: number; end: number; replacement: string }[] = [];
+export interface SyntaxSegment {
+  text: string;
+  /** Tailwind class for a recognised token; undefined for plain text between tokens. */
+  cls?: string;
+}
 
-    // Process patterns in priority order (strings first to prevent
-    // numbers/booleans inside strings from being matched separately)
-    patterns.forEach(({ regex, class: className }) => {
-      let match;
-      regex.lastIndex = 0;
-      while ((match = regex.exec(text)) !== null) {
-        const start = match.index;
-        const end = start + match[0].length;
-        // Skip if any position in this range is already claimed
-        let overlaps = false;
-        for (let i = start; i < end; i++) {
-          if (claimed.has(i)) { overlaps = true; break; }
-        }
-        if (!overlaps) {
-          for (let i = start; i < end; i++) claimed.add(i);
-          tokens.push({
-            start,
-            end,
-            replacement: `<span class="${className}">${escapeHtml(match[0])}</span>`,
-          });
+/**
+ * Split one rendered line into coloured tokens and the plain text between them.
+ *
+ * This returns data, and the component below renders it as React elements.
+ * The previous version built an HTML string — escaping only the tokens it had
+ * matched and splicing them into the *unescaped* line — and handed it to
+ * `dangerouslySetInnerHTML`. Any non-JSON response (a gateway's HTML 502 page,
+ * identical on both sides and therefore rendered as an "unchanged" row) was
+ * injected into the page as live markup. Response text is data; it is never
+ * interpreted as HTML here.
+ */
+export function tokenizeJsonLine(text: string): SyntaxSegment[] {
+  const claimed = new Uint8Array(text.length);
+  const tokens: { start: number; end: number; cls: string }[] = [];
+
+  for (const { regex, cls } of PATTERNS) {
+    regex.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(text)) !== null) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (end === start) {
+        regex.lastIndex++;
+        continue;
+      }
+      let overlaps = false;
+      for (let i = start; i < end; i++) {
+        if (claimed[i]) {
+          overlaps = true;
+          break;
         }
       }
-    });
+      if (overlaps) continue;
+      for (let i = start; i < end; i++) claimed[i] = 1;
+      tokens.push({ start, end, cls });
+    }
+  }
 
-    // Sort by start position descending to replace from end to start
-    tokens.sort((a, b) => b.start - a.start);
+  tokens.sort((a, b) => a.start - b.start);
 
-    // Apply replacements
-    tokens.forEach(({ start, end, replacement }) => {
-      result = result.substring(0, start) + replacement + result.substring(end);
-    });
+  const out: SyntaxSegment[] = [];
+  let cursor = 0;
+  for (const t of tokens) {
+    if (t.start > cursor) out.push({ text: text.slice(cursor, t.start) });
+    out.push({ text: text.slice(t.start, t.end), cls: t.cls });
+    cursor = t.end;
+  }
+  if (cursor < text.length) out.push({ text: text.slice(cursor) });
+  return out;
+}
 
-    return result;
-  };
-
-  const escapeHtml = (text: string) => {
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-  };
-
+export function JsonSyntaxHighlight({ content, className }: JsonSyntaxHighlightProps) {
+  const segments = tokenizeJsonLine(content);
   return (
-    <span 
-      className={cn('font-mono', className)}
-      dangerouslySetInnerHTML={{ __html: highlightJson(content) }}
-    />
+    <span className={cn('font-mono', className)}>
+      {segments.map((s, i) =>
+        s.cls ? (
+          <span key={i} className={s.cls}>
+            {s.text}
+          </span>
+        ) : (
+          <Fragment key={i}>{s.text}</Fragment>
+        )
+      )}
+    </span>
   );
 }

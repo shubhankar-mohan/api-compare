@@ -7,89 +7,105 @@ export interface ParsedCurl {
 }
 
 /**
- * Tokenize a curl command string, handling quoted strings (single and double),
- * backslash line continuations, and escaped characters.
+ * Windows "Copy as cURL (cmd)" escapes with carets: `^"` for a quote, `^&` for
+ * an ampersand, and `^` + newline for a continuation. Undo that so the command
+ * tokenizes like its bash equivalent. Only applied when the caret-quote form is
+ * present, so a bash command containing a literal `^` is left alone.
+ */
+function normalizeCmdCarets(input: string): string {
+  if (!input.includes('^"')) return input;
+  return input.replace(/\^\r?\n/g, ' ').replace(/\^(.)/g, '$1');
+}
+
+/** One `\xHH` / `\uHHHH` escape inside `$'...'`, or null if not one. */
+function ansiCodeEscape(text: string, at: number): { char: string; length: number } | null {
+  const m = /^(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/.exec(text.slice(at, at + 5));
+  if (!m) return null;
+  return { char: String.fromCharCode(parseInt(m[1].slice(1), 16)), length: m[1].length };
+}
+
+/**
+ * Tokenize a curl command string with shell word semantics.
+ *
+ * A word runs until unquoted whitespace, and quoted runs inside it are
+ * concatenated: `'{"name":"O'"'"'Brien"}'` is one word, exactly as bash sees
+ * it. The previous tokenizer emitted one token per quoted run, so that
+ * apostrophe idiom (and Postman's `'\''`) truncated the body at the quote.
+ *
+ * - single quotes: no escape processing
+ * - double quotes: backslash escapes only `$`, `` ` ``, `"` and `\`
+ * - `$'...'`: ANSI-C escapes (`\n`, `\t`, `\xHH`, `\uHHHH`, ...)
+ * - unquoted backslash escapes the next character
  */
 function tokenize(input: string): string[] {
-  // Normalize line continuations: backslash followed by newline
-  const normalized = input.replace(/\\\s*\n/g, ' ');
-
+  const normalized = normalizeCmdCarets(input).replace(/\\\s*\n/g, ' ');
   const tokens: string[] = [];
-  let i = 0;
   const len = normalized.length;
+  let i = 0;
 
   while (i < len) {
-    // Skip whitespace
     if (/\s/.test(normalized[i])) {
       i++;
       continue;
     }
 
-    // Single-quoted string: no escape processing inside
-    if (normalized[i] === "'") {
-      i++; // skip opening quote
-      let token = '';
-      while (i < len && normalized[i] !== "'") {
-        token += normalized[i];
-        i++;
-      }
-      i++; // skip closing quote
-      tokens.push(token);
-      continue;
-    }
-
-    // Double-quoted string: handle backslash escapes
-    if (normalized[i] === '"') {
-      i++; // skip opening quote
-      let token = '';
-      while (i < len && normalized[i] !== '"') {
-        if (normalized[i] === '\\' && i + 1 < len) {
-          i++;
-          token += normalized[i];
-        } else {
-          token += normalized[i];
-        }
-        i++;
-      }
-      i++; // skip closing quote
-      tokens.push(token);
-      continue;
-    }
-
-    // $'...' ANSI-C quoting (used by some browser "copy as cURL")
-    if (normalized[i] === '$' && i + 1 < len && normalized[i + 1] === "'") {
-      i += 2; // skip $'
-      let token = '';
-      while (i < len && normalized[i] !== "'") {
-        if (normalized[i] === '\\' && i + 1 < len) {
-          i++;
-          switch (normalized[i]) {
-            case 'n': token += '\n'; break;
-            case 't': token += '\t'; break;
-            case 'r': token += '\r'; break;
-            case '\\': token += '\\'; break;
-            case "'": token += "'"; break;
-            default: token += '\\' + normalized[i]; break;
-          }
-        } else {
-          token += normalized[i];
-        }
-        i++;
-      }
-      i++; // skip closing quote
-      tokens.push(token);
-      continue;
-    }
-
-    // Unquoted token
     let token = '';
     while (i < len && !/\s/.test(normalized[i])) {
-      if (normalized[i] === '\\' && i + 1 < len) {
+      const ch = normalized[i];
+
+      if (ch === "'") {
         i++;
-        token += normalized[i];
-      } else {
-        token += normalized[i];
+        while (i < len && normalized[i] !== "'") token += normalized[i++];
+        i++;
+        continue;
       }
+
+      if (ch === '"') {
+        i++;
+        while (i < len && normalized[i] !== '"') {
+          if (normalized[i] === '\\' && i + 1 < len && '$`"\\'.includes(normalized[i + 1])) i++;
+          token += normalized[i++];
+        }
+        i++;
+        continue;
+      }
+
+      if (ch === '$' && normalized[i + 1] === "'") {
+        i += 2;
+        while (i < len && normalized[i] !== "'") {
+          if (normalized[i] === '\\' && i + 1 < len) {
+            i++;
+            const code = ansiCodeEscape(normalized, i);
+            if (code) {
+              token += code.char;
+              i += code.length;
+              continue;
+            }
+            switch (normalized[i]) {
+              case 'n': token += '\n'; break;
+              case 't': token += '\t'; break;
+              case 'r': token += '\r'; break;
+              case '\\': token += '\\'; break;
+              case "'": token += "'"; break;
+              case '"': token += '"'; break;
+              default: token += '\\' + normalized[i]; break;
+            }
+            i++;
+            continue;
+          }
+          token += normalized[i++];
+        }
+        i++;
+        continue;
+      }
+
+      if (ch === '\\' && i + 1 < len) {
+        i++;
+        token += normalized[i++];
+        continue;
+      }
+
+      token += ch;
       i++;
     }
     tokens.push(token);
@@ -98,14 +114,34 @@ function tokenize(input: string): string[] {
   return tokens;
 }
 
+/**
+ * Split glued short options (`-XPUT`, `-H"X: 1"`, `-d'{"a":1}'`) into the
+ * option and its argument. Combined no-argument flags (`-sSL`) are left for
+ * the main loop, which already recognises them.
+ */
+const GLUED_ARG_OPTIONS = new Set(['X', 'H', 'd', 'b', 'u', 'A', 'e', 'F', 'o', 'm', 'x']);
+function splitGluedOptions(tokens: string[]): string[] {
+  const out: string[] = [];
+  for (const t of tokens) {
+    if (t.length > 2 && t[0] === '-' && t[1] !== '-' && GLUED_ARG_OPTIONS.has(t[1])) {
+      out.push(t.slice(0, 2), t.slice(2));
+    } else {
+      out.push(t);
+    }
+  }
+  return out;
+}
+
 export function parseCurl(curlCommand: string): ParsedCurl {
-  const tokens = tokenize(curlCommand.trim());
+  const tokens = splitGluedOptions(tokenize(curlCommand.trim()));
 
   let url = '';
   let method = '';
   let body: string | null = null;
   const headers: Record<string, string> = {};
   let hasJsonFlag = false;
+  let sendAsQuery = false; // -G / --get
+  const formParts: string[] = []; // -F / --form
 
   let i = 0;
 
@@ -238,10 +274,21 @@ export function parseCurl(curlCommand: string): ParsedCurl {
       continue;
     }
 
-    // --- Content-Type shorthand ---
-    if (token === '--form' || token === '-F') {
-      // multipart/form-data — skip for now, just consume the arg
-      i += 2;
+    // --- Multipart form fields ---
+    // The browser cannot rebuild a multipart body from text, but the fields
+    // are still the request the user pasted: keep them and imply POST rather
+    // than silently sending an empty GET.
+    if (token === '--form' || token === '-F' || token === '--form-string') {
+      i++;
+      if (i < tokens.length) formParts.push(tokens[i]);
+      i++;
+      continue;
+    }
+
+    // --- -G / --get: send -d data as the query string ---
+    if (token === '-G' || token === '--get') {
+      sendAsQuery = true;
+      i++;
       continue;
     }
 
@@ -334,6 +381,22 @@ export function parseCurl(curlCommand: string): ParsedCurl {
     if (!headers['Accept'] && !headers['accept']) {
       headers['Accept'] = 'application/json';
     }
+  }
+
+  if (formParts.length > 0 && body === null) {
+    body = formParts.join('&');
+  }
+
+  // curl defaults a scheme-less URL to http://
+  if (url && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
+    url = `http://${url}`;
+  }
+
+  // -G: the data goes on the URL and the request stays a GET.
+  if (sendAsQuery && body !== null) {
+    url += (url.includes('?') ? '&' : '?') + body;
+    body = null;
+    if (!method) method = 'GET';
   }
 
   // Infer method

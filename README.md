@@ -33,11 +33,15 @@ A browser will not let a page read a cross-origin response unless the API sends
 diffing tool, and you usually can't change their config — so a direct request from the
 page fails, and no amount of client-side code can override it.
 
-Run the local proxy instead:
+Run the local proxy instead (one zero-dependency file, Node 18+):
 
 ```bash
-npx @shubhankar-mohan/diffchecker-proxy
+curl -fsSL https://raw.githubusercontent.com/shubhankar-mohan/api-compare/main/proxy/diffchecker-proxy.mjs -o diffchecker-proxy.mjs && node diffchecker-proxy.mjs
 ```
+
+Or, once the package is on the npm registry, `npx @shubhankar-mohan/diffchecker-proxy`.
+If the app is hosted somewhere other than localhost, start the proxy with
+`--allow-origin https://your-host`.
 
 Then turn on **Use local proxy** in the app. Requests are forwarded from your own
 machine, so CORS doesn't apply:

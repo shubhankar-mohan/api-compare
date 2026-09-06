@@ -88,12 +88,11 @@ export function DiffOptionsPanel({
     onOptionsChange({ ...options, ignorePaths: newPaths });
   };
 
+  // Advanced mode is on by default, so it is not "an option the user set".
   const activeOptionsCount = [
-    options.advancedMode,
     options.semanticComparison,
     options.ignoreCase,
     options.ignoreWhitespace,
-    options.detectArrayMoves,
     (options.ignoreKeys?.length || 0) > 0,
     (options.ignorePaths?.length || 0) > 0,
   ].filter(Boolean).length;
@@ -242,50 +241,6 @@ export function DiffOptionsPanel({
                     }
                   />
                 </div>
-              </div>
-
-              <Separator />
-
-              {/* Array Options */}
-              <div className="space-y-3">
-                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  Arrays
-                </Label>
-                
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="detectMoves" className="text-sm font-normal">
-                      Detect reordering
-                    </Label>
-                    <p className="text-xs text-muted-foreground">
-                      Track moved array items
-                    </p>
-                  </div>
-                  <Switch
-                    id="detectMoves"
-                    checked={options.detectArrayMoves || false}
-                    onCheckedChange={(checked) =>
-                      onOptionsChange({ ...options, detectArrayMoves: checked })
-                    }
-                  />
-                </div>
-
-                {options.detectArrayMoves && (
-                  <div className="space-y-2">
-                    <Label htmlFor="arrayKey" className="text-sm">
-                      Array key field
-                    </Label>
-                    <Input
-                      id="arrayKey"
-                      placeholder="e.g., id, key, name"
-                      value={options.arrayKeyField || ''}
-                      onChange={(e) =>
-                        onOptionsChange({ ...options, arrayKeyField: e.target.value })
-                      }
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                )}
               </div>
 
               <Separator />

@@ -26,10 +26,10 @@
  *
  * Usage
  * -----
- *   npx @diffchecker/proxy
- *   npx @diffchecker/proxy --port 9000
- *   npx @diffchecker/proxy --allow-origin https://my-internal-tool.corp
- *   npx @diffchecker/proxy --allow-origin '*'        # any page may use it
+ *   npx @shubhankar-mohan/diffchecker-proxy
+ *   npx @shubhankar-mohan/diffchecker-proxy --port 9000
+ *   npx @shubhankar-mohan/diffchecker-proxy --allow-origin https://my-internal-tool.corp
+ *   npx @shubhankar-mohan/diffchecker-proxy --allow-origin '*'        # any page may use it
  *
  * Requires Node 18+ (for global fetch).
  */
@@ -49,13 +49,12 @@ const VERSION = '1.0.0';
 const DEFAULT_PORT = 8787;
 
 // Origins allowed to use this proxy. A localhost relay that answers every
-// origin is an open relay for any tab you have open, so the default is a
-// short list rather than `*`. Any loopback origin is accepted regardless of
-// port, since that is where the app runs during development.
-const DEFAULT_ALLOWED_ORIGINS = [
-  'https://diffchecker.dev',
-  'https://www.diffchecker.dev',
-];
+// origin is an open relay for any tab you have open, so nothing is allowed by
+// default except loopback origins (where the app runs during development).
+// A hosted copy of the app must be named explicitly with --allow-origin.
+// This list used to pre-authorise https://diffchecker.dev, a domain this
+// project does not own — any script on that site could have driven the relay.
+const DEFAULT_ALLOWED_ORIGINS = [];
 
 const LOOPBACK_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
@@ -78,6 +77,9 @@ const ALLOWED_METHODS = new Set([
 ]);
 
 const MAX_BODY_BYTES = 25 * 1024 * 1024; // 25 MB request body cap
+// Upstream responses are read with a byte budget rather than `.text()`: a
+// 200 MB body used to be buffered whole and left the process at over 1 GB.
+const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 function parseCliArgs() {
@@ -107,14 +109,18 @@ diffchecker-proxy ${VERSION}
 
 Options
   -p, --port <n>            Port to listen on (default ${DEFAULT_PORT})
-      --allow-origin <o>    Additional allowed origin; repeatable, or '*'
+      --allow-origin <o>    Allow a hosted copy of the app, e.g.
+                            --allow-origin https://diff.example.com
+                            (repeatable, or '*' to allow any page)
       --timeout <ms>        Upstream request timeout (default ${DEFAULT_TIMEOUT_MS})
   -h, --help                Show this message
   -v, --version             Print version
 
 Security
   Binds to 127.0.0.1 only, so nothing on your network can reach it.
-  Only the origins above may use it. Stop the process to revoke access.
+  Only pages served from localhost, plus any --allow-origin you pass, may
+  use it. Upstream responses over ${MAX_RESPONSE_BYTES / (1024 * 1024)} MB and request bodies over
+  ${MAX_BODY_BYTES / (1024 * 1024)} MB are refused. Stop the process to revoke access.
 `);
 }
 
@@ -151,8 +157,13 @@ function readBody(req) {
     req.on('data', (chunk) => {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
-        reject(new Error('Request body exceeds 25 MB limit'));
-        req.destroy();
+        // Stop reading but keep the socket open so the caller can answer
+        // 413; destroying it first left the client with an empty reply that
+        // looked like "proxy not running".
+        req.pause();
+        const err = new Error(`Request body exceeds ${MAX_BODY_BYTES / (1024 * 1024)} MB limit`);
+        err.kind = 'too-large';
+        reject(err);
         return;
       }
       chunks.push(chunk);
@@ -168,6 +179,9 @@ function describeUpstreamError(err) {
   const code = cause?.code ?? '';
   const message = cause?.message ?? err?.message ?? String(err);
 
+  if (err?.kind === 'too-large') {
+    return { kind: 'too-large', message: err.message };
+  }
   if (err?.name === 'TimeoutError' || err?.name === 'AbortError' || code === 'UND_ERR_CONNECT_TIMEOUT') {
     return { kind: 'timeout', message: 'The API did not respond in time.' };
   }
@@ -183,11 +197,37 @@ function describeUpstreamError(err) {
   return { kind: 'network', message };
 }
 
+/** Read a response body up to `max` bytes; throws a 'too-large' error past it. */
+async function readCapped(response, max) {
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      const err = new Error(`Upstream response exceeds ${max / (1024 * 1024)} MB; compare a smaller payload.`);
+      err.kind = 'too-large';
+      throw err;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 async function handleProxy(req, res, origin, timeoutMs) {
   let payload;
   try {
     payload = JSON.parse(await readBody(req));
   } catch (err) {
+    if (err?.kind === 'too-large') {
+      sendJson(res, 413, { ok: false, error: { kind: 'too-large', message: err.message } });
+      req.destroy();
+      return;
+    }
     sendJson(res, 400, { ok: false, error: { kind: 'bad-request', message: err.message } });
     return;
   }
@@ -237,7 +277,7 @@ async function handleProxy(req, res, origin, timeoutMs) {
       signal: AbortSignal.timeout(timeoutMs),
     });
 
-    const text = await upstream.text();
+    const text = await readCapped(upstream, MAX_RESPONSE_BYTES);
     const responseHeaders = {};
     upstream.headers.forEach((value, key) => {
       responseHeaders[key] = value;
@@ -287,6 +327,15 @@ function main() {
       return;
     }
 
+    const path = (req.url ?? '/').split('?')[0];
+
+    // Read-only and reveals nothing but the version: answer it for a browser
+    // tab or curl (no Origin) so "is it running?" has a plain answer.
+    if (req.method === 'GET' && (path === '/health' || path === '/')) {
+      sendJson(res, 200, { ok: true, name: 'diffchecker-proxy', version: VERSION });
+      return;
+    }
+
     if (!allowed) {
       sendJson(res, 403, {
         ok: false,
@@ -295,13 +344,6 @@ function main() {
           message: `Origin "${origin || '(none)'}" may not use this proxy. Restart with --allow-origin ${origin || '<origin>'}`,
         },
       });
-      return;
-    }
-
-    const path = (req.url ?? '/').split('?')[0];
-
-    if (req.method === 'GET' && (path === '/health' || path === '/')) {
-      sendJson(res, 200, { ok: true, name: 'diffchecker-proxy', version: VERSION });
       return;
     }
 
@@ -318,7 +360,7 @@ function main() {
       console.error(
         `\ndiffchecker-proxy: port ${port} is already in use.\n` +
           `Either another copy is already running (that is fine — use it), or\n` +
-          `pick a different port:  npx @diffchecker/proxy --port ${port + 1}\n`
+          `pick a different port:  npx @shubhankar-mohan/diffchecker-proxy --port ${port + 1}\n`
       );
       process.exit(1);
     }
@@ -332,7 +374,7 @@ function main() {
   diffchecker-proxy ${VERSION}
 
   Listening on   http://127.0.0.1:${port}
-  Allowed origin ${[...DEFAULT_ALLOWED_ORIGINS, ...extraOrigins].join(', ')}, plus any localhost port
+  Allowed origins: any localhost port${extraOrigins.length ? ', plus ' + extraOrigins.join(', ') : ''}
 
   Paste that address into DiffChecker's proxy setting, then run your comparison.
   Requests are forwarded from this machine. Nothing is stored or sent anywhere else.
