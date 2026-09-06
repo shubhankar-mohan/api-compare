@@ -264,7 +264,9 @@ const Index = () => {
                 )}
               </>
             ) : (
-              <TextDiffChecker />
+              <ErrorBoundary label="Comparing these texts">
+                <TextDiffChecker />
+              </ErrorBoundary>
             )}
           </div>
 

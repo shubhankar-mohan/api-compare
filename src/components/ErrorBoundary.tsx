@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DiffDepthExceededError } from '@/lib/jsonTreeDiff';
 
 interface Props {
   children: ReactNode;
@@ -43,6 +44,9 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     const { error } = this.state;
     if (!error) return this.props.children;
+    // A typed rejection of the input is not a bug: say what was rejected.
+    const rejectedInput =
+      error instanceof DiffDepthExceededError || error.name === 'DiffDepthExceededError';
 
     return (
       <div className="mx-auto my-8 max-w-2xl rounded-lg border border-destructive/50 bg-destructive/5 p-6">
@@ -51,17 +55,24 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="min-w-0 flex-1 space-y-3">
             <div>
               <h2 className="text-base font-medium">
-                {this.props.label ? `${this.props.label} failed` : 'Something went wrong'}
+                {rejectedInput
+                  ? 'This input is too deep to diff'
+                  : this.props.label
+                    ? `${this.props.label} failed`
+                    : 'Something went wrong'}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                This is a bug in DiffChecker, not in your data. Your responses were not sent
-                anywhere.
+                {rejectedInput
+                  ? error.message
+                  : 'This is a bug in DiffChecker, not in your data. Your responses were not sent anywhere.'}
               </p>
             </div>
 
-            <code className="block max-h-40 overflow-auto break-all rounded bg-background p-2 text-xs text-destructive">
-              {error.message || String(error)}
-            </code>
+            {!rejectedInput && (
+              <code className="block max-h-40 overflow-auto break-all rounded bg-background p-2 text-xs text-destructive">
+                {error.message || String(error)}
+              </code>
+            )}
 
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" onClick={this.reset}>
