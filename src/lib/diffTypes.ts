@@ -27,10 +27,11 @@ export interface DiffSegment {
  * - `rule`   — a saved noise rule matched this path; not counted as a difference.
  * - `auto`   — a classifier suggests this field is noise; still counted.
  * - `legacy` — the opt-in `legacyAutoIgnore` heuristic suppressed it.
+ * - `option` — an "ignore key/path" from the Diff Options panel; not counted.
  */
 export interface NoiseAnnotation {
   type: string;
-  source: 'rule' | 'auto' | 'legacy';
+  source: 'rule' | 'auto' | 'legacy' | 'option';
 }
 
 export interface DiffLine {

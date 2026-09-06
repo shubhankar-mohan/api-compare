@@ -139,9 +139,11 @@ function DiffLineComponent({
   const autoMarker = line.noise?.source === 'auto' ? line.noise : undefined;
   const ruleMarker = line.noise?.source === 'rule' ? line.noise : undefined;
   const legacyMarker = line.noise?.source === 'legacy' ? line.noise : undefined;
-  // Greyed when suppression actually applied — by a saved rule, or by the
-  // opt-in legacy heuristic — and the user hasn't toggled show-anyway.
-  const noiseApplied = !!(ruleMarker || legacyMarker) && !isShowAnyway;
+  const optionMarker = line.noise?.source === 'option' ? line.noise : undefined;
+  // Greyed when suppression actually applied — by a saved rule, a Diff Options
+  // ignore, or the opt-in legacy heuristic — and the user hasn't toggled
+  // show-anyway.
+  const noiseApplied = !!(ruleMarker || legacyMarker || optionMarker) && !isShowAnyway;
 
   const bgClass = {
     added: 'bg-[hsl(var(--diff-added-bg))]',
@@ -207,6 +209,14 @@ function DiffLineComponent({
             <Sparkles className="h-2.5 w-2.5" aria-hidden="true" />
             Teach: {autoMarker.type} is noise here
           </Badge>
+        )}
+        {optionMarker && side === 'right' && (
+          <span
+            className="ml-2 text-[10px] font-normal text-muted-foreground align-middle"
+            title="Ignored by a key or path in Diff Options; still shown so the pane reads as the response"
+          >
+            ignored via Diff Options
+          </span>
         )}
         {/* Rule applied → "Show anyway" inline button */}
         {ruleMarker && side === 'right' && onToggleShowAnyway && (

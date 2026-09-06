@@ -25,12 +25,21 @@
 import type { DiffLine, DiffResult, DiffSegment, NoiseAnnotation } from './diffTypes';
 import { computeScalarRowSegments } from './inlineSegments';
 import { alignSequences, type AlignOp } from './sequenceAlign';
-import { ruleMatchesPath, type NoiseRule } from './noiseRules';
+import { isValidRulePath, ruleMatchesPath, type NoiseRule } from './noiseRules';
 import { CLASSIFIERS, detectFieldType, getClassifier, type NoiseClassifier } from './smartComparison';
 
 export interface JsonTreeDiffOptions {
   /** Saved noise rules. A matching path is rendered greyed and not counted. */
   rules?: NoiseRule[];
+  /**
+   * Paths from the Diff Options panel ("ignore key" → `$..key`, "ignore
+   * path" → the path). Applied exactly like rules — rendered, greyed, not
+   * counted, masked for array identity — and labelled `source: 'option'`.
+   * They used to delete the members from the document before diffing, so
+   * the panes stopped reading back as the response and the merge dropped
+   * every ignored key.
+   */
+  ignoredPaths?: string[];
   /**
    * Legacy heuristic suppression of id-shaped and timestamp-shaped values.
    *
@@ -205,6 +214,15 @@ function canonical(value: unknown, n: ScalarNormalization = EXACT): string {
 }
 
 const NOISE_PLACEHOLDER = '" noise"';
+
+/** Rules synthesised from `ignoredPaths`; they render as `source: 'option'`. */
+const OPTION_RULES = new WeakSet<NoiseRule>();
+
+function noiseFor(rule: NoiseRule): NoiseAnnotation {
+  return OPTION_RULES.has(rule)
+    ? { type: 'ignored', source: 'option' }
+    : { type: rule.type, source: 'rule' };
+}
 
 /**
  * Canonical form with rule-suppressed paths collapsed to a placeholder.
@@ -777,7 +795,7 @@ function walkPair(l: unknown, r: unknown, ctx: WalkCtx, s: WalkState): void {
   const rule = matchingRule(s.rules, ctx.path);
   if (rule) {
     s.b.unchangedZip(renderOne(l, ctx, ctx.leftComma, s), renderOne(r, ctx, ctx.rightComma, s), {
-      noise: { type: rule.type, source: 'rule' },
+      noise: noiseFor(rule),
       fieldKey: ctx.key,
       path: ctx.path,
     });
@@ -1021,9 +1039,15 @@ export function computeJsonTreeDiff(
   // Estimating size up front is cheaper than unwinding a huge diff halfway.
   const estimatedRows = countRenderedRows(leftValue) + countRenderedRows(rightValue);
 
+  const optionRules: NoiseRule[] = (options.ignoredPaths ?? [])
+    .filter(isValidRulePath)
+    .map((path) => ({ path, type: 'uuid', source: 'manual', createdAt: 0 }));
+  for (const rule of optionRules) OPTION_RULES.add(rule);
+  const rules = optionRules.length ? [...(options.rules ?? []), ...optionRules] : options.rules;
+
   const state: WalkState = {
     b: new RowBuilder(),
-    rules: options.rules,
+    rules,
     legacyAutoIgnore: options.legacyAutoIgnore === true,
     sortKeys,
     inlineSegments: options.inlineSegments !== false && estimatedRows <= INLINE_SEGMENT_MAX_ROWS,

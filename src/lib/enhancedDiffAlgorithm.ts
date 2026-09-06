@@ -402,24 +402,13 @@ function statisticsFromRows(diff: DiffResult): EnhancedDiffResult['statistics'] 
   };
 }
 
-// Recursively filter out ignored keys and paths from a JSON object
-function filterIgnoredContent(obj: any, options: DiffOptions, path: string): any {
-  if (obj === null || obj === undefined || typeof obj !== 'object') {
-    return obj;
-  }
-
-  if (Array.isArray(obj)) {
-    return obj.map((item, index) => filterIgnoredContent(item, options, `${path}[${index}]`));
-  }
-
-  const result: Record<string, any> = {};
-  for (const key of Object.keys(obj)) {
-    if (options.ignoreKeys?.includes(key)) continue;
-    const childPath = path ? `${path}.${key}` : key;
-    if (shouldIgnorePath(childPath, options.ignorePaths)) continue;
-    result[key] = filterIgnoredContent(obj[key], options, childPath);
-  }
-  return result;
+/** `a.b`, `.a.b` and `$.a.b` all name the rule path `$.a.b`. */
+function toRulePath(raw: string): string {
+  const p = raw.trim();
+  if (!p) return p;
+  if (p.startsWith('$')) return p;
+  if (p.startsWith('.') || p.startsWith('[')) return `$${p}`;
+  return `$.${p}`;
 }
 
 // Enhanced diff computation
@@ -486,8 +475,7 @@ export function computeEnhancedDiff(
     rightObj = rightText;
   }
 
-  // detectStructuralChanges, computeDiffStatistics and filterIgnoredContent all
-  // recurse without their own depth guards. Checking once here means a
+  // detectStructuralChanges recurses without its own depth guard. Checking once here means a
   // pathologically nested response fails with a typed, explainable error
   // instead of a RangeError thrown mid-render.
   if (isJson) {
@@ -515,16 +503,18 @@ export function computeEnhancedDiff(
   const statsTooLarge = leftLineCount > STATS_MAX_LINES || rightLineCount > STATS_MAX_LINES;
   const computeStats = isJson && options.advancedMode !== false && !statsTooLarge;
   
-  // Filter out ignored keys/paths before formatting for diff display
-  if (isJson && (options.ignoreKeys?.length || options.ignorePaths?.length)) {
-    leftObj = filterIgnoredContent(leftObj, options, '');
-    rightObj = filterIgnoredContent(rightObj, options, '');
-  }
-
   // Format for diff display
   const leftFormatted = isJson ? JSON.stringify(leftObj, null, 2) : leftText;
   const rightFormatted = isJson ? JSON.stringify(rightObj, null, 2) : rightText;
-  
+
+  // Ignore keys/paths reach the tree diff as rule paths. They used to be
+  // filtered out of the documents here, so the panes no longer read back as
+  // the response and the merge silently dropped every ignored key.
+  const ignoredPaths = [
+    ...(options.ignoreKeys ?? []).map((key) => `$..${key}`),
+    ...(options.ignorePaths ?? []).map(toRulePath),
+  ];
+
   // Use existing diff algorithm for line-by-line comparison
   const basicDiff = computeDiff(leftFormatted, rightFormatted, {
     advancedMode: options.advancedMode,
@@ -532,6 +522,7 @@ export function computeEnhancedDiff(
     semanticComparison: options.semanticComparison,
     ignoreCase: options.ignoreCase,
     ignoreWhitespace: options.ignoreWhitespace,
+    ignoredPaths,
   });
 
   // Derived from the rows above, so the summary can never contradict the panes.

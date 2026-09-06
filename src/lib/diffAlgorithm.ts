@@ -53,6 +53,8 @@ export interface ComputeDiffOptions {
   ignoreCase?: boolean;
   /** Collapse runs of whitespace in strings before comparing. */
   ignoreWhitespace?: boolean;
+  /** Diff Options ignore keys/paths, as rule paths. See `JsonTreeDiffOptions`. */
+  ignoredPaths?: string[];
 }
 
 // ── normalization (text path) ──────────────────────────────────────────────
@@ -389,6 +391,7 @@ export function computeDiff(
       semanticComparison: options?.semanticComparison,
       ignoreCase: options?.ignoreCase,
       ignoreWhitespace: options?.ignoreWhitespace,
+      ignoredPaths: options?.ignoredPaths,
     });
     const warnings = [...precisionWarnings(leftText, rightText), ...invisibleOnlyWarnings(result)];
     return warnings.length > 0 ? { ...result, warnings } : result;

@@ -87,21 +87,19 @@ describe('enhancedDiffAlgorithm', () => {
 });
 
 describe('computeEnhancedDiff — DiffOptions.ignorePaths regression (Lane A)', () => {
-  // Regression: after the noise-aware-wedge work threaded `rules` through
-  // computeEnhancedDiff, the existing DiffOptions.ignorePaths feature must
-  // continue to silently strip ignored paths from the diff.
-  //
-  // Note: the existing implementation matches paths in the form `parent.key`
-  // (no leading `$.`), and the rule format `$.parent.key` strips the `$`
-  // and keeps the `.` — this is the pre-existing behavior we preserve.
-  it('strips a nested ignorePaths match before diff', () => {
+  // ignorePaths used to strip the member from both documents before the
+  // diff. It now behaves like a noise rule: the member is still rendered (so
+  // the pane reads back as the response) but greyed and not counted. Both the
+  // bare `parent.key` form and `$.parent.key` are accepted.
+  it('marks a nested ignorePaths match as ignored instead of stripping it', () => {
     const left = JSON.stringify({ user: { id: 1, traceId: 'A', name: 'foo' } }, null, 2);
     const right = JSON.stringify({ user: { id: 2, traceId: 'B', name: 'foo' } }, null, 2);
     const options: DiffOptions = { ignorePaths: ['user.traceId'] };
     const result = computeEnhancedDiff(left, right, options);
 
-    const allLines = [...result.left, ...result.right].map((l) => l.content).join('\n');
-    expect(allLines).not.toContain('traceId');
+    const traceRow = result.right.find((l) => l.content.includes('traceId'));
+    expect(traceRow?.type).toBe('unchanged');
+    expect(traceRow?.noise).toEqual({ type: 'ignored', source: 'option' });
   });
 
   it('still surfaces real changes when ignorePaths is set', () => {
@@ -125,9 +123,10 @@ describe('computeEnhancedDiff — DiffOptions.ignorePaths regression (Lane A)', 
     ];
     const result = computeEnhancedDiff(left, right, options, rules);
 
-    // ignorePaths still strips traceId from the diff
+    // ignorePaths still suppresses traceId, out-of-band
     const allLines = [...result.left, ...result.right].map((l) => l.content).join('\n');
-    expect(allLines).not.toContain('traceId');
+    const traceRow = result.right.find((l) => l.content.includes('traceId'));
+    expect(traceRow?.noise).toEqual({ type: 'ignored', source: 'option' });
 
     // The rule is reported on the line object, not encoded into the rendered
     // text. Metadata inside `content` was forgeable by any API response, so
@@ -154,7 +153,47 @@ describe('computeEnhancedDiff — DiffOptions.ignorePaths regression (Lane A)', 
     const right = JSON.stringify({ id: 1, secret: 'B', name: 'foo' }, null, 2);
     const options: DiffOptions = { ignoreKeys: ['secret'] };
     const result = computeEnhancedDiff(left, right, options);
-    const allLines = [...result.left, ...result.right].map((l) => l.content).join('\n');
-    expect(allLines).not.toContain('secret');
+    const secretRow = result.right.find((l) => l.content.includes('secret'));
+    expect(secretRow?.noise).toEqual({ type: 'ignored', source: 'option' });
+    expect(result.hasDifferences).toBe(false);
+  });
+});
+
+// ── Review follow-up: ignore keys/paths behave like noise rules ────────────
+
+describe('ignoreKeys / ignorePaths render, grey and do not count (review follow-up)', () => {
+  const left = JSON.stringify({ id: 1, ts: '2024-01-01T00:00:00Z', name: 'a' }, null, 2);
+  const right = JSON.stringify({ id: 1, ts: '2024-01-02T00:00:00Z', name: 'a' }, null, 2);
+  const readBack = (rows: { type: string; content: string }[]) =>
+    JSON.parse(rows.filter((l) => l.type !== 'empty').map((l) => l.content).join('\n'));
+
+  it('an ignored key is still rendered on both panes, so the pane reads back as the response', () => {
+    const d = computeEnhancedDiff(left, right, { ignoreKeys: ['ts'] });
+    expect(readBack(d.left)).toEqual(JSON.parse(left));
+    expect(readBack(d.right)).toEqual(JSON.parse(right));
+  });
+
+  it('an ignored key is marked as noise from the options and not counted', () => {
+    const d = computeEnhancedDiff(left, right, { ignoreKeys: ['ts'] });
+    const row = d.right.find((l) => l.content.includes('"ts"'));
+    expect(row?.noise).toEqual({ type: 'ignored', source: 'option' });
+    expect(d.hasDifferences).toBe(false);
+    expect(d.additions + d.removals).toBe(0);
+    expect(d.statistics.percentageChanged).toBe(0);
+  });
+
+  it('an ignored path in the documented $.path form works, at any depth with $..', () => {
+    const l = JSON.stringify({ a: { ts: 1 }, b: { ts: 1 } });
+    const r = JSON.stringify({ a: { ts: 2 }, b: { ts: 3 } });
+    expect(computeEnhancedDiff(l, r, { ignorePaths: ['$.a.ts'] }).hasDifferences).toBe(true);
+    expect(computeEnhancedDiff(l, r, { ignorePaths: ['$.a.ts', '$.b.ts'] }).hasDifferences).toBe(false);
+    expect(computeEnhancedDiff(l, r, { ignorePaths: ['$..ts'] }).hasDifferences).toBe(false);
+    expect(computeEnhancedDiff(l, r, { ignorePaths: ['a.ts', 'b.ts'] }).hasDifferences).toBe(false);
+  });
+
+  it('a real change elsewhere is still reported with an ignore active', () => {
+    const d = computeEnhancedDiff(left, right.replace('"name": "a"', '"name": "b"'), { ignoreKeys: ['ts'] });
+    expect(d.hasDifferences).toBe(true);
+    expect(d.additions).toBe(1);
   });
 });
