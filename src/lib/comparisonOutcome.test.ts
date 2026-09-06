@@ -31,6 +31,11 @@ describe('comparisonOutcome', () => {
     expect(o.description).not.toMatch(/differences found|identical/i);
   });
 
+  it('does not double the full stop when the error already ends with one', () => {
+    const o = comparisonOutcome({ original: ok('{}'), localhost: failed('Server not reachable (DNS, TLS, or network error).') });
+    expect(o.description).not.toContain('..');
+  });
+
   it('mentions a status mismatch, which needs no diff to know', () => {
     const o = comparisonOutcome({ original: ok('{}', 200), localhost: ok('{}', 500) });
     expect(o.description).toMatch(/200.*500|status/i);

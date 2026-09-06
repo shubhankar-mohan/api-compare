@@ -18,7 +18,7 @@ export interface ComparisonOutcome {
  */
 export function comparisonOutcome(result: ComparisonResult): ComparisonOutcome {
   const { original, localhost } = result;
-  const reason = (r: typeof original) => r.error || `HTTP ${r.status || 'error'}`;
+  const reason = (r: typeof original) => (r.error || `HTTP ${r.status || 'error'}`).replace(/[.\s]+$/, '');
 
   if (!original.success && !localhost.success) {
     return {
